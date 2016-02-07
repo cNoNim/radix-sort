@@ -31,7 +31,7 @@ and changes in AMD Bolt C++ template library
 https://github.com/HSA-Libraries/Bolt
 */
 
-#include "radix-sort.hh"
+#include "primitives/radix-sort.hh"
 
 #include "opengl.hh"
 
@@ -49,9 +49,9 @@ https://github.com/HSA-Libraries/Bolt
 
 #define WG_COUNT 48
 #define WG_SIZE 256
-#define BLOCK_SIZE 1024 //(4 * WG_SIZE)
+#define BLOCK_SIZE 1024  // (4 * WG_SIZE)
 #define BITS_PER_PASS 4
-#define RADICES 16 // (1 << BITS_PER_PASS)
+#define RADICES 16       // (1 << BITS_PER_PASS)
 #define RADICES_MASK 0xf // (RADICES - 1)
 
 static GLchar const * prolog = GLSL(
@@ -93,6 +93,19 @@ GLSL_DEFINE(INC_BY4_CHECKED(dest, idx, flag), do {
   atomicAdd(dest[idx.z], uint(flag.z));
   atomicAdd(dest[idx.w], uint(flag.w));
 } while(0))
+GLSL(
+struct blocks_info {
+  int count;
+  uint per_wg;
+};
+
+blocks_info get_blocks_info(const uint n) {
+  const uint aligned = n + BLOCK_SIZE - (n % BLOCK_SIZE);
+  const uint blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+  const uint blocks_per_wg = (blocks + WG_COUNT - 1) / WG_COUNT;
+  const int n_blocks = int(aligned / BLOCK_SIZE) - int(blocks_per_wg * WG_IDX);
+  return blocks_info(n_blocks, blocks_per_wg);
+})
 ;
 
 static GLchar const * histogram_count = GLSL(
@@ -102,22 +115,18 @@ void main() {
   BARRIER;
 
   const uint n = data[KEY_IN].buf.length();
-  const uint aligned = n + BLOCK_SIZE - (n % BLOCK_SIZE);
-  const uint blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-  const uint blocks_per_wg = (blocks + WG_COUNT - 1) / WG_COUNT;
-  int n_blocks =  int(aligned / BLOCK_SIZE) - int(blocks_per_wg * WG_IDX);
-  uint addr = BLOCK_SIZE * blocks_per_wg * WG_IDX + LC_IDX;
-  EACH(i_block, min(int(blocks_per_wg), n_blocks)) {
-    EACH(i, 4) {
-      if (addr < n) {
-        const uint k = is_signed
-          ? BFE_SIGN(data[KEY_IN].buf[addr], shift, BITS_PER_PASS)
-          : BFE(data[KEY_IN].buf[addr], shift, BITS_PER_PASS);
-        uint key = descending != is_signed ? (RADICES_MASK - k) : k;
-        local_histogram[key * WG_SIZE + LC_IDX]++;
-      }
-      addr += WG_SIZE;
-    }
+  const blocks_info blocks = get_blocks_info(n);
+  uvec4 addr = blocks.per_wg * BLOCK_SIZE * WG_IDX + 4 * LC_IDX + uvec4(0, 1, 2, 3);
+  EACH(i_block, min(int(blocks.per_wg), blocks.count)) {
+    const bvec4 less_than = lessThan(addr, uvec4(n));
+    const uvec4 data_vec = GET_BY4(uvec4, data[KEY_IN].buf, addr);
+    const uvec4 k = is_signed
+      ? BFE_SIGN(data_vec, shift, BITS_PER_PASS)
+      : BFE(data_vec, shift, BITS_PER_PASS);
+    uvec4 key = descending != is_signed ? (RADICES_MASK - k) : k;
+    uvec4 local_key = key * WG_SIZE + LC_IDX;
+    INC_BY4_CHECKED(local_histogram, local_key, less_than);
+    addr += BLOCK_SIZE;
   }
   BARRIER;
 
@@ -198,7 +207,7 @@ void sort_bits(inout uvec4 sort, inout uvec4 sort_val) {
     key += prefix_sum(prefix_scan(key), total);
     BARRIER;
 
-    const uvec4 dest_addr = MIX(uvec4, key, addr - key + total, cmp);//(1 - cmp) * (addr - key + total) + cmp * key;
+    const uvec4 dest_addr = MIX(uvec4, key, addr - key + total, cmp);
     SET_BY4(local_sort, dest_addr, sort);
     SET_BY4(local_sort_val, dest_addr, sort_val);
     BARRIER;
@@ -225,12 +234,9 @@ void main() {
   BARRIER;
 
   const uint n = data[KEY_IN].buf.length();
-  const uint aligned = n + BLOCK_SIZE - (n % BLOCK_SIZE);
-  const uint blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-  const uint blocks_per_wg = (blocks + WG_COUNT - 1) / WG_COUNT;
-  const int n_blocks =  int(aligned / BLOCK_SIZE) - int(blocks_per_wg * WG_IDX);
-  uvec4 addr = BLOCK_SIZE * blocks_per_wg * WG_IDX + 4 * LC_IDX + uvec4(0, 1, 2, 3);
-  EACH(i_block, min(blocks_per_wg, n_blocks)) {
+  const blocks_info blocks = get_blocks_info(n);
+  uvec4 addr = blocks.per_wg * BLOCK_SIZE * WG_IDX + 4 * LC_IDX + uvec4(0, 1, 2, 3);
+  EACH(i_block, min(blocks.per_wg, blocks.count)) {
     uint sum = 0;
     const bvec4 less_than = lessThan(addr, uvec4(n));
     const bvec4 less_than_val = lessThan(addr, uvec4(key_index ? n : 0));

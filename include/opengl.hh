@@ -1,13 +1,12 @@
-/*2016, Oleg Ageev*/
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN 1
 #define WIN32_EXTRA_LEAN
 #include <windows.h>
 #include <GL/gl.h>
-#include <GL/glext.h>
+#include "GL/glext.h"
 #ifndef NDEBUG
-#include <GL/wglext.h>
+#include "GL/wglext.h"
 #endif
 
 #pragma comment(lib, "opengl32.lib")
@@ -116,7 +115,7 @@ struct pipeline {
     gl.BindProgramPipeline(id);
     glRects(-1, -1, 1, 1);
   }
-private:
+private: 
   static GLuint
   make(GL const & gl) {
     auto id = 0u;

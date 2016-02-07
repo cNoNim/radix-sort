@@ -1,4 +1,3 @@
-/*2016, Oleg Ageev*/
 #include "opengl.hh"
 
 GL gl;
