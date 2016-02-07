@@ -94,19 +94,38 @@ GLSL_DEFINE(INC_BY4_CHECKED(dest, idx, flag), do {
   atomicAdd(dest[idx.w], uint(flag.w));
 } while(0))
 GLSL(
-struct blocks_info {
-  int count;
-  uint per_wg;
-};
-
+struct blocks_info { uint count; uint per_wg; };
 blocks_info get_blocks_info(const uint n) {
   const uint aligned = n + BLOCK_SIZE - (n % BLOCK_SIZE);
   const uint blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
   const uint blocks_per_wg = (blocks + WG_COUNT - 1) / WG_COUNT;
   const int n_blocks = int(aligned / BLOCK_SIZE) - int(blocks_per_wg * WG_IDX);
-  return blocks_info(n_blocks, blocks_per_wg);
-})
-;
+  return blocks_info(uint(clamp(n_blocks, 0, blocks_per_wg)), blocks_per_wg);
+}
+shared uint local_sort[BLOCK_SIZE];
+uint prefix_sum(uint data, inout uint total_sum) {
+  const uint lc_idx = LC_IDX + WG_SIZE;
+  local_sort[LC_IDX] = 0;
+  local_sort[lc_idx] = data;
+  BARRIER;
+  uint tmp;
+  for (int i = 1; i < WG_SIZE; i *= 2) {
+    tmp = local_sort[lc_idx - i];
+    BARRIER;
+    local_sort[lc_idx] += tmp;
+    BARRIER;
+  }
+  total_sum = local_sort[WG_SIZE * 2 - 1];
+  return local_sort[lc_idx - 1];
+}
+uint prefix_scan(inout uvec4 v) {
+  uint sum = 0, tmp;
+  tmp = v.x; v.x = sum; sum += tmp;
+  tmp = v.y; v.y = sum; sum += tmp;
+  tmp = v.z; v.z = sum; sum += tmp;
+  tmp = v.w; v.w = sum; sum += tmp;
+  return sum;
+});
 
 static GLchar const * histogram_count = GLSL(
 shared uint local_histogram[WG_SIZE * RADICES];
@@ -117,14 +136,14 @@ void main() {
   const uint n = data[KEY_IN].buf.length();
   const blocks_info blocks = get_blocks_info(n);
   uvec4 addr = blocks.per_wg * BLOCK_SIZE * WG_IDX + 4 * LC_IDX + uvec4(0, 1, 2, 3);
-  EACH(i_block, min(int(blocks.per_wg), blocks.count)) {
+  EACH(i_block, blocks.count) {
     const bvec4 less_than = lessThan(addr, uvec4(n));
     const uvec4 data_vec = GET_BY4(uvec4, data[KEY_IN].buf, addr);
     const uvec4 k = is_signed
       ? BFE_SIGN(data_vec, shift, BITS_PER_PASS)
       : BFE(data_vec, shift, BITS_PER_PASS);
-    uvec4 key = descending != is_signed ? (RADICES_MASK - k) : k;
-    uvec4 local_key = key * WG_SIZE + LC_IDX;
+    const uvec4 key = descending != is_signed ? (RADICES_MASK - k) : k;
+    const uvec4 local_key = key * WG_SIZE + LC_IDX;
     INC_BY4_CHECKED(local_histogram, local_key, less_than);
     addr += BLOCK_SIZE;
   }
@@ -137,27 +156,11 @@ void main() {
 });
 
 static GLchar const * prefix_scan = GLSL(
-shared uint local_sort[WG_SIZE * 2];
-uint prefix_sum(uint data, inout uint total) {
-  uint local_idx = LC_IDX;
-  local_sort[local_idx] = 0;
-  local_idx += WG_SIZE;
-  local_sort[local_idx] = data;
-  BARRIER;
-  uint tmp;
-  for (int i = 1; i < WG_SIZE; i *= 2) {
-    tmp = local_sort[local_idx - i];
-    BARRIER;
-    local_sort[local_idx] += tmp;
-    BARRIER;
-  }
-  total = local_sort[WG_SIZE * 2 - 1];
-  return local_sort[local_idx - 1];
-}
 shared uint seed;
 void main() {
   seed = 0;
   BARRIER;
+
   EACH(d, RADICES) {
     uint val = 0;
     uint idx = d * WG_COUNT + LC_IDX;
@@ -170,39 +173,14 @@ void main() {
 });
 
 static GLchar const * permute = GLSL(
-shared uint local_sort[BLOCK_SIZE + WG_SIZE];
-uint prefix_sum(uint data, inout uint total_sum) {
-  uint local_idx = LC_IDX;
-  local_sort[local_idx] = 0;
-  local_idx += WG_SIZE;
-  local_sort[local_idx] = data;
-  BARRIER;
-  uint tmp;
-  for (int i = 1; i < WG_SIZE; i *= 2) {
-    tmp = local_sort[local_idx - i];
-    BARRIER;
-    local_sort[local_idx] += tmp;
-    BARRIER;
-  }
-  total_sum = local_sort[WG_SIZE * 2 - 1];
-  return local_sort[local_idx - 1];
-}
-uint prefix_scan(inout uvec4 v) {
-  uint sum = 0, tmp;
-  tmp = v.x; v.x = sum; sum += tmp;
-  tmp = v.y; v.y = sum; sum += tmp;
-  tmp = v.z; v.z = sum; sum += tmp;
-  tmp = v.w; v.w = sum; sum += tmp;
-  return sum;
-}
-shared uint local_sort_val[BLOCK_SIZE + WG_SIZE];
+shared uint local_sort_val[BLOCK_SIZE];
 void sort_bits(inout uvec4 sort, inout uvec4 sort_val) {
   uvec4 signs = BFE_SIGN(sort, shift, BITS_PER_PASS);
   const uvec4 addr = 4 * LC_IDX + uvec4(0, 1, 2, 3);
   EACH(i_bit, BITS_PER_PASS) {
     const uint mask = (1 << i_bit);
-    const uvec4 cmp = uvec4(equal((is_signed ? signs : (sort >> shift)) & mask, uvec4(descending != is_signed) * mask));
-    uvec4 key = cmp;
+    const bvec4 cmp = equal((is_signed ? signs : (sort >> shift)) & mask, uvec4(descending != is_signed) * mask);
+    uvec4 key = uvec4(cmp);
     uint total;
     key += prefix_sum(prefix_scan(key), total);
     BARRIER;
@@ -228,16 +206,15 @@ void sort_bits(inout uvec4 sort, inout uvec4 sort_val) {
 shared uint local_histogram_to_carry[RADICES];
 shared uint local_histogram[RADICES * 2];
 void main() {
-  const uint def = (uint(!descending) * 0xffffffff) ^ (uint(is_signed) * 0x80000000);
-  const uint l_idx = (descending && !is_signed ? (RADICES_MASK - LC_IDX) : LC_IDX);
-  if (LC_IDX < RADICES) local_histogram_to_carry[LC_IDX] = histogram[l_idx * WG_COUNT + WG_IDX];
+  const uint carry_idx = (descending && !is_signed ? (RADICES_MASK - LC_IDX) : LC_IDX);
+  if (LC_IDX < RADICES) local_histogram_to_carry[LC_IDX] = histogram[carry_idx * WG_COUNT + WG_IDX];
   BARRIER;
 
+  const uint def = (uint(!descending) * 0xffffffff) ^ (uint(is_signed) * 0x80000000);
   const uint n = data[KEY_IN].buf.length();
   const blocks_info blocks = get_blocks_info(n);
   uvec4 addr = blocks.per_wg * BLOCK_SIZE * WG_IDX + 4 * LC_IDX + uvec4(0, 1, 2, 3);
-  EACH(i_block, min(blocks.per_wg, blocks.count)) {
-    uint sum = 0;
+  EACH(i_block, blocks.count) {
     const bvec4 less_than = lessThan(addr, uvec4(n));
     const bvec4 less_than_val = lessThan(addr, uvec4(key_index ? n : 0));
     const uvec4 data_vec = GET_BY4(uvec4, data[KEY_IN].buf, addr);
@@ -252,36 +229,33 @@ void main() {
     const uvec4 hist_key = key + RADICES;
     const uvec4 local_key = key + (LC_IDX / RADICES) * RADICES;
     k = is_signed ? key : k;
-    const uvec4 offset = 4 * LC_IDX + uvec4(0, 1, 2, 3) + GET_BY4(uvec4, local_histogram_to_carry, k);
-    if (LC_IDX < RADICES) local_histogram[LC_IDX] = 0;
+    const uvec4 offset = GET_BY4(uvec4, local_histogram_to_carry, k) + 4 * LC_IDX + uvec4(0, 1, 2, 3);
     local_sort[LC_IDX] = 0;
     BARRIER;
 
     INC_BY4_CHECKED(local_sort, local_key, less_than);
     BARRIER;
 
-    const uint h_idx = LC_IDX + RADICES;
+    const uint lc_idx = LC_IDX + RADICES;
     if (LC_IDX < RADICES) {
-      EACH(i, WG_SIZE / RADICES) sum += local_sort[i * RADICES + LC_IDX];
-      local_histogram[h_idx] = sum;
+      local_histogram[LC_IDX] = 0;
+      uint sum = 0; EACH(i, WG_SIZE / RADICES) sum += local_sort[i * RADICES + LC_IDX];
+      local_histogram_to_carry[carry_idx] += local_histogram[lc_idx] = sum;
     }
     BARRIER;
 
     if (LC_IDX < RADICES) {
-      local_histogram[h_idx] = local_histogram[h_idx - 1];
-      atomicAdd(local_histogram[h_idx],
-        local_histogram[h_idx - 3] + local_histogram[h_idx - 2] + local_histogram[h_idx - 1]);
-      atomicAdd(local_histogram[h_idx],
-        local_histogram[h_idx - 12] + local_histogram[h_idx - 8] + local_histogram[h_idx - 4]);
+      local_histogram[lc_idx] = local_histogram[lc_idx - 1];
+      atomicAdd(local_histogram[lc_idx],
+        local_histogram[lc_idx - 3] + local_histogram[lc_idx - 2] + local_histogram[lc_idx - 1]);
+      atomicAdd(local_histogram[lc_idx],
+        local_histogram[lc_idx - 12] + local_histogram[lc_idx - 8] + local_histogram[lc_idx - 4]);
     }
     BARRIER;
 
     const uvec4 out_key = offset - GET_BY4(uvec4, local_histogram, hist_key);
     SET_BY4_CHECKED(data[KEY_OUT].buf, out_key, sort, less_than);
     SET_BY4_CHECKED(data[VALUE_OUT].buf, out_key, sort_val, less_than_val);
-    BARRIER;
-
-    if (LC_IDX < RADICES) local_histogram_to_carry[l_idx] += sum;
     BARRIER;
     addr += BLOCK_SIZE;
   }
@@ -290,17 +264,16 @@ void main() {
 static GLchar const * flip_float = GLSL(
 void main() {
   const uint n = data[KEY_IN].buf.length();
-  const uint blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-  const uint blocks_per_wg = (blocks + WG_COUNT - 1) / WG_COUNT;
-  const uint n_blocks = blocks_per_wg * 4;
-  const uint offset = (WG_SIZE * n_blocks) * WG_IDX;
-  EACH(i, n_blocks) {
-    const uint addr = offset + i * WG_SIZE;
-    bool less_than = ((addr + LC_IDX) < n);
-    uint value = less_than ? data[KEY_IN].buf[addr + LC_IDX] : 0;
-    uint mask = is_signed ? ((value >> 31) - 1) | 0x80000000 : -int(value >> 31) | 0x80000000;
+  const blocks_info blocks = get_blocks_info(n);
+  uvec4 addr = blocks.per_wg * BLOCK_SIZE * WG_IDX + 4 * LC_IDX + uvec4(0, 1, 2, 3);
+  EACH(i_block, blocks.count) {
+    const bvec4 less_than = lessThan(addr, uvec4(n));
+    const uvec4 data_vec = GET_BY4(uvec4, data[KEY_IN].buf, addr);
+    uvec4 value = MIX(uvec4, data_vec, 0, less_than);
+    uvec4 mask = is_signed ? ((value >> 31) - 1) | 0x80000000 : -ivec4(value >> 31) | 0x80000000;
     value ^= mask;
-    if (less_than) data[KEY_IN].buf[addr + LC_IDX] = value;
+    SET_BY4_CHECKED(data[KEY_IN].buf, addr, value, less_than);
+    addr += BLOCK_SIZE;
   }
 });
 
@@ -310,7 +283,8 @@ void swap(T& a, T& b) { auto tmp = a; a = b; b = tmp; }
 struct { compute_program histogram_count, prefix_scan, permute, flip_float; } static kernels;
 struct { GLuint consts, histogram, output[2]; } static buffers;
 
-void radix_sort(GL const & gl, unsigned int key, unsigned int size, unsigned int index /*= 0*/, bool descending /*=  false*/, bool is_signed /*=  false*/, bool is_float /*=  false*/) {
+void radix_sort(GL const & gl, unsigned int key, unsigned int size, unsigned int index /*= 0*/,
+  bool descending /*=  false*/, bool is_signed /*=  false*/, bool is_float /*=  false*/) {
   struct Consts { GLuint shift, descending, is_signed, key_index; } consts = { 0, descending, 0, index != 0 };
   static bool initialized = false;
   if (!initialized) {
