@@ -115,7 +115,7 @@ struct pipeline {
     gl.BindProgramPipeline(id);
     glRects(-1, -1, 1, 1);
   }
-private: 
+private:
   static GLuint
   make(GL const & gl) {
     auto id = 0u;
