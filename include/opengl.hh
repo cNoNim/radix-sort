@@ -5,11 +5,11 @@
 #include <windows.h>
 #include <GL/gl.h>
 #include "GL/glext.h"
-#ifndef NDEBUG
 #include "GL/wglext.h"
-#endif
 
 #pragma comment(lib, "opengl32.lib")
+
+#define BUFFER_OFFSET(i) ((char *)NULL + (i))
 
 #define _STR(x) #x
 #define STR(x) _STR(x)
@@ -17,32 +17,34 @@
 #define GLSL(...) STR(__VA_ARGS__) "\n"
 #define GLSL_DEFINE(name, ...) "#define " STR(name) " " GLSL(__VA_ARGS__)
 
-#define GL_FUNCTIONS(FUNCTION) \
+#define GL_FUNCTIONS(FUNCTION)                         \
+  FUNCTION(BindBuffer,           BINDBUFFER)           \
+  FUNCTION(BindBufferBase,       BINDBUFFERBASE)       \
+  FUNCTION(BindBufferRange,      BINDBUFFERRANGE)      \
+  FUNCTION(BindProgramPipeline,  BINDPROGRAMPIPELINE)  \
+  FUNCTION(BufferData,           BUFFERDATA)           \
+  FUNCTION(CopyBufferSubData,    COPYBUFFERSUBDATA)    \
   FUNCTION(CreateShaderProgramv, CREATESHADERPROGRAMV) \
-  FUNCTION(UseProgram, USEPROGRAM) \
-  FUNCTION(GenProgramPipelines, GENPROGRAMPIPELINES) \
-  FUNCTION(UseProgramStages, USEPROGRAMSTAGES) \
-  FUNCTION(BindProgramPipeline, BINDPROGRAMPIPELINE) \
-  FUNCTION(GenBuffers, GENBUFFERS) \
-  FUNCTION(BindBuffer, BINDBUFFER) \
-  FUNCTION(BufferData, BUFFERDATA) \
-  FUNCTION(MapBuffer, MAPBUFFER) \
-  FUNCTION(UnmapBuffer, UNMAPBUFFER) \
-  FUNCTION(BindBufferBase, BINDBUFFERBASE) \
-  FUNCTION(CopyBufferSubData, COPYBUFFERSUBDATA) \
-  FUNCTION(GetProgramiv,      GETPROGRAMIV) \
-  FUNCTION(GetProgramInfoLog, GETPROGRAMINFOLOG) \
-  FUNCTION(DispatchCompute, DISPATCHCOMPUTE) \
-  FUNCTION(MemoryBarrier, MEMORYBARRIER) \
-  FUNCTION(DebugMessageInsert, DEBUGMESSAGEINSERT) \
-  FUNCTION(DebugMessageCallback, DEBUGMESSAGECALLBACK)
+  FUNCTION(DebugMessageCallback, DEBUGMESSAGECALLBACK) \
+  FUNCTION(DebugMessageInsert,   DEBUGMESSAGEINSERT)   \
+  FUNCTION(DispatchCompute,      DISPATCHCOMPUTE)      \
+  FUNCTION(GenBuffers,           GENBUFFERS)           \
+  FUNCTION(GenProgramPipelines,  GENPROGRAMPIPELINES)  \
+  FUNCTION(GetProgramInfoLog,    GETPROGRAMINFOLOG)    \
+  FUNCTION(GetProgramiv,         GETPROGRAMIV)         \
+  FUNCTION(MapBuffer,            MAPBUFFER)            \
+  FUNCTION(MemoryBarrier,        MEMORYBARRIER)        \
+  FUNCTION(UnmapBuffer,          UNMAPBUFFER)          \
+  FUNCTION(UseProgram,           USEPROGRAM)           \
+  FUNCTION(UseProgramStages,     USEPROGRAMSTAGES)
 
-#define WGL_FUNCTIONS(FUNCTION)
+#define WGL_FUNCTIONS(FUNCTION)                              \
+  FUNCTION(CreateContextAttribsARB, CREATECONTEXTATTRIBSARB)
+
 
 #define GL_DEBUG_FUNCTIONS(FUNCTION)
 
-#define WGL_DEBUG_FUNCTIONS(FUNCTION) \
-  FUNCTION(CreateContextAttribsARB, CREATECONTEXTATTRIBSARB)
+#define WGL_DEBUG_FUNCTIONS(FUNCTION)
 
 struct GL {
 #define FUNCTION(name, NAME) \
@@ -86,8 +88,8 @@ make_program(GL const & gl, Sources... sources) {
     precision highp float;
     precision highp int;
     layout(std140, column_major) uniform;
-    layout(std430, column_major) buffer;),
-    sources...
+    layout(std430, column_major) buffer;
+    ), sources...
   };
   auto id = gl.CreateShaderProgramv(TYPE, ARRAYSIZE(array_sources), array_sources);
   auto status = GL_TRUE;

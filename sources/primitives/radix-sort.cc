@@ -283,7 +283,7 @@ void swap(T& a, T& b) { auto tmp = a; a = b; b = tmp; }
 struct { compute_program histogram_count, prefix_scan, permute, flip_float; } static kernels;
 struct { GLuint consts, histogram, output[2]; } static buffers;
 
-void radix_sort(GL const & gl, unsigned int key, unsigned int size, unsigned int index /*= 0*/,
+void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/,
   bool descending /*=  false*/, bool is_signed /*=  false*/, bool is_float /*=  false*/) {
   struct Consts { GLuint shift, descending, is_signed, key_index; } consts = { 0, descending, 0, index != 0 };
   static bool initialized = false;
@@ -317,10 +317,10 @@ void radix_sort(GL const & gl, unsigned int key, unsigned int size, unsigned int
     *static_cast<Consts *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY)) = consts;
     gl.UnmapBuffer(GL_COPY_WRITE_BUFFER);
     gl.BindBufferBase(GL_UNIFORM_BUFFER, CONSTS, buffers.consts);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, DATA + KEY_IN, data[KEY_IN]);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, DATA + KEY_OUT, data[KEY_OUT]);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_IN, data[VALUE_IN]);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_OUT, data[VALUE_OUT]);
+    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + KEY_IN, data[KEY_IN], 0, sizeof(GLuint) * size);
+    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + KEY_OUT, data[KEY_OUT], 0, sizeof(GLuint) * size);
+    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_IN, data[VALUE_IN], 0, sizeof(GLuint) * size);
+    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_OUT, data[VALUE_OUT], 0, sizeof(GLuint) * size);
 
     if (is_float && ib == 0)
       kernels.flip_float.dispatch(gl, WG_COUNT);

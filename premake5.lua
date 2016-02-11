@@ -33,7 +33,7 @@ project "radix-sort"
 project "radix-sort.tests"
   kind "consoleapp"
   language "c++"
-  links { "radix-sort", "opengl32" }
+  links { "radix-sort" }
 
   files { "tests/**.cc"
         , "tests/**.hh"

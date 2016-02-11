@@ -1,25 +1,36 @@
-#include <iostream>
+#include <cstdlib>
+#include <cstdio>
+#include <cstdint>
+#include <cinttypes>
 
 #include <opengl.hh>
 #include <primitives/radix-sort.hh>
 
-#include "debug.hh"
-
-#define BUFFER_OFFSET(i) ((char *)NULL + (i))
-
-#define EACH(i, size) for (int i = 0; i < size; i++)
+#define EACH(i, size) for (GLsizeiptr i = 0; i < size; i++)
 
 void APIENTRY debug_message(
   GLenum source, GLenum type, GLuint id, GLenum severity,
   GLsizei, const GLchar* message, void*) {
-  DEBUGF("%1!#08x!:%2!#08x!:%3!#08x!:%4!#08x!:%5", source, type, id, severity, message);
-  if (type == GL_DEBUG_TYPE_ERROR) {
-    std::cout << message << std::endl;
-    exit(1);
-  }
+  printf("%#010x:%#010x:%#010x:%#010x:\n%s", source, type, id, severity, message);
+  if (type == GL_DEBUG_TYPE_ERROR) exit(1);
 }
 
-int main() {
+GLuint64 ticks(void)
+{
+  const GLuint64 ticks_per_second = 10000000;
+  static LARGE_INTEGER freq;
+  static GLuint64 start_time;
+  LARGE_INTEGER value;
+  QueryPerformanceCounter(&value);
+  if (!freq.QuadPart) {
+    QueryPerformanceFrequency(&freq);
+    start_time = value.QuadPart;
+  }
+  GLuint64 current_time = value.QuadPart;
+  return ((current_time - start_time) * ticks_per_second) / freq.QuadPart;
+}
+
+int main(int argc, char const * argv[]) {
   auto window = CreateWindowExA(WS_EX_APPWINDOW, "static", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   auto device = GetDC(window);
   static PIXELFORMATDESCRIPTOR pfd = { 0 };
@@ -33,44 +44,64 @@ int main() {
     debug_message(GL_DEBUG_SOURCE_APPLICATION, GL_DEBUG_TYPE_ERROR,
       GL_VERSION, GL_DEBUG_SEVERITY_HIGH, -1, "OpenGL 4.3 Required", nullptr);
   GL const & gl = GL::initialize((GLDEBUGPROC) &debug_message);
+  bool debug = false;
 #ifndef NDEBUG
-  int attribs[] = { WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB, 0 };
-  wglMakeCurrent(device, gl.CreateContextAttribsARB(device, nullptr, attribs));
-  GL::initialize((GLDEBUGPROC) &debug_message);
-  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+  debug = true;
 #endif
+  if (debug || argc > 2) {
+    GLint attribs[] = { WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB, 0 };
+    wglMakeCurrent(device, gl.CreateContextAttribsARB(device, nullptr, attribs));
+    GL::initialize((GLDEBUGPROC) &debug_message);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+  }
 
-  GLuint const count = 256 * 256 * 256;
+  printf("OpenGL %s\n\t%s\n\t%s\n", glGetString(GL_VERSION), glGetString(GL_VENDOR), glGetString(GL_RENDERER));
+
+  GLsizeiptr min_count = 1024;
+  GLsizeiptr max_count = 67108864;
+  if (argc > 1) {
+    GLuint64 count;
+    sscanf(argv[1], "%llu", &count);
+    if (count < (GLuint64)min_count) max_count = min_count;
+    if (count > UINT_MAX) max_count = UINT_MAX;
+    min_count = max_count = (GLsizeiptr)count;
+  }
   struct { GLuint objects[2]; } buffers = { 0 };
   gl.GenBuffers(sizeof(buffers) / sizeof(GLuint), reinterpret_cast<GLuint *>(&buffers));
   gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * count, nullptr, GL_DYNAMIC_COPY);
+  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
   gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[1]);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * count, nullptr, GL_DYNAMIC_COPY);
-  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
-  auto keys = static_cast<GLint *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY));
-  gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
-  auto indexes = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
-  EACH(i, count) {
-    int j = i == 0 ? 0 : rand() % i;
-    keys[i] = keys[j];
-    indexes[i] = indexes[j];
-    keys[j] = i - count / 2;
-    indexes[j] = i;
-  }
-  gl.UnmapBuffer(GL_COPY_READ_BUFFER);
-  gl.UnmapBuffer(GL_COPY_WRITE_BUFFER);
-  radix_sort(gl, buffers.objects[0], count, buffers.objects[1], true, true);
-  auto passed = true;
-  {
+  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
+  radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
+  for (GLsizeiptr count = max_count; count >= min_count; count >>= 1) {
+    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
+    auto keys = static_cast<GLint *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY));
     gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
-    auto ptr = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
-    for (size_t i = 0; i < count && passed; i++) {
-      passed &= ptr[i] == count - i - 1;
+    auto indexes = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
+    EACH(i, count) {
+      GLuint j = i == 0 ? 0 : rand() % i;
+      keys[i] = keys[j];
+      indexes[i] = indexes[j];
+      keys[j] = GLint(i - count / 2);
+      indexes[j] = GLuint(i);
     }
     gl.UnmapBuffer(GL_COPY_READ_BUFFER);
+    gl.UnmapBuffer(GL_COPY_WRITE_BUFFER);
+    auto start = ticks();
+    radix_sort(gl, buffers.objects[0], count, buffers.objects[1], true, true);
+    auto elapsed = ticks() - start;
+    auto passed = true;
+    {
+      gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
+      auto ptr = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
+      for (GLsizeiptr i = 0; i < count && passed; i++)
+        passed &= ptr[i] == count - i - 1;
+      gl.UnmapBuffer(GL_COPY_READ_BUFFER);
+    }
+    printf("count %10" PRIdPTR " elapsed %10llu ticks %10.8f sec speed %10ll" PRIdPTR " per sec\t - ",
+      count, elapsed, elapsed / 10000000., (count * 10000000ll) / elapsed);
+    if (passed) printf("PASSED\n");
+    else printf("FAILED\n");
   }
-  if (passed) std::cout << "TEST PASSED" << std::endl;
-  else std::cout << "TEST FAILED" << std::endl;
   return 0;
 }
