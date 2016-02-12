@@ -17,6 +17,13 @@
 #define GLSL(...) STR(__VA_ARGS__) "\n"
 #define GLSL_DEFINE(name, ...) "#define " STR(name) " " GLSL(__VA_ARGS__)
 
+#ifndef NDEBUG
+#define GLSL_DEBUG(...) __VA_ARGS__
+#else
+#define GLSL_DEBUG(...)
+#endif
+
+
 #define GL_FUNCTIONS(FUNCTION)                         \
   FUNCTION(BindBuffer,           BINDBUFFER)           \
   FUNCTION(BindBufferBase,       BINDBUFFERBASE)       \

@@ -11,8 +11,12 @@
 void APIENTRY debug_message(
   GLenum source, GLenum type, GLuint id, GLenum severity,
   GLsizei, const GLchar* message, void*) {
-  printf("%#010x:%#010x:%#010x:%#010x:\n%s", source, type, id, severity, message);
-  if (type == GL_DEBUG_TYPE_ERROR) exit(1);
+  printf("%#010x:%#010x:%#010x:%#010x:\n%s\n", source, type, id, severity, message);
+  if (type == GL_DEBUG_TYPE_ERROR) {
+    printf("Press [ENTER] to exit...");
+    getchar();
+    exit(1);
+  }
 }
 
 GLuint64 ticks(void)
@@ -72,7 +76,9 @@ int main(int argc, char const * argv[]) {
   gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
   gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[1]);
   gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
+#ifdef NDEBUG
   radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
+#endif
   for (GLsizeiptr count = max_count; count >= min_count; count >>= 1) {
     gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
     auto keys = static_cast<GLint *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY));
@@ -81,8 +87,8 @@ int main(int argc, char const * argv[]) {
     EACH(i, count) {
       GLuint j = i == 0 ? 0 : rand() % i;
       keys[i] = keys[j];
-      indexes[i] = indexes[j];
       keys[j] = GLint(i - count / 2);
+      indexes[i] = indexes[j];
       indexes[j] = GLuint(i);
     }
     gl.UnmapBuffer(GL_COPY_READ_BUFFER);
@@ -103,5 +109,7 @@ int main(int argc, char const * argv[]) {
     if (passed) printf("PASSED\n");
     else printf("FAILED\n");
   }
+  printf("COMPLETE\nPress [ENTER] for exit...");
+  getchar();
   return 0;
 }
