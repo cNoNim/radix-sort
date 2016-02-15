@@ -73,34 +73,34 @@ int main(int argc, char const * argv[]) {
   gl.GenBuffers(sizeof(buffers) / sizeof(GLuint), reinterpret_cast<GLuint *>(&buffers));
   gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
   gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
-  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[1]);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
+  //gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[1]);
+  //gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
 #ifdef NDEBUG
   //radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
 #endif
   for (GLsizeiptr count = max_count; count >= min_count; count >>= 1) {
     gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
-    auto keys = static_cast<GLint *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY));
-    gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
-    auto indexes = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
+    auto keys = static_cast<GLuint/*GLint*/ *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY));
+    //gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
+    //auto indexes = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
     EACH(i, count) {
-      GLuint j = i == 0 ? 0 : rand() % i;
-      keys[i] = keys[j];
+      //GLuint j = i == 0 ? 0 : rand() % i;
+      keys[i] = /*keys[j];
       keys[j] = GLint(i - count / 2);
       indexes[i] = indexes[j];
-      indexes[j] = GLuint(i);
+      indexes[j] =*/ GLuint(i);
     }
-    gl.UnmapBuffer(GL_COPY_READ_BUFFER);
+    //gl.UnmapBuffer(GL_COPY_READ_BUFFER);
     gl.UnmapBuffer(GL_COPY_WRITE_BUFFER);
     auto start = ticks();
-    radix_sort(gl, buffers.objects[0], count, buffers.objects[1], true, true);
+    radix_sort(gl, buffers.objects[0], count);//, buffers.objects[1], true, true);
     auto elapsed = ticks() - start;
     auto passed = true;
     {
-      gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
+      gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[0]);//buffers.objects[1]);
       auto ptr = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
       for (GLsizeiptr i = 0; i < count && passed; i++)
-        passed &= ptr[i] == count - i - 1;
+        passed &= (ptr[i] == i);//count - i - 1);
       gl.UnmapBuffer(GL_COPY_READ_BUFFER);
     }
     printf("count %10" PRIdPTR " elapsed %10" PRId64 " ticks %10.8f sec speed %10" PRId64 " per sec\t - ",
