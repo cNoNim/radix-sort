@@ -40,9 +40,6 @@ https://github.com/HSA-Libraries/Bolt
 
 #define CONSTS 0
 
-#define TEMP 5
-#define TEMP_OUT temp[WG_IDX * WG_SIZE + LC_IDX]
-
 #define HISTOGRAM 0
 #define DATA 1
 #define KEY_IN 0
@@ -50,7 +47,7 @@ https://github.com/HSA-Libraries/Bolt
 #define VALUE_IN 2
 #define VALUE_OUT 3
 
-#define WG_COUNT 48
+#define WG_COUNT 64
 #define WG_SIZE 256
 #define BLOCK_SIZE 1024  // (4 * WG_SIZE)
 #define BITS_PER_PASS 4
@@ -67,10 +64,7 @@ layout(binding = CONSTS) uniform Consts {
 };
 layout(binding = HISTOGRAM) buffer Histogram { uint histogram[]; };
 layout(binding = DATA) buffer Data { uint buf[]; } data[4];
-GLSL_DEBUG(
-struct temp_data { uvec4 a, b, c, d; };
-layout(binding = TEMP) buffer Temp { temp_data temp[]; };
-))
+)
 GLSL_DEFINE(EACH(i, size), for (int i = 0; i < size; i++))
 GLSL_DEFINE(TO_MASK(n), ((1 << (n)) - 1))
 GLSL_DEFINE(BFE(src, s, n), ((src >> s) & TO_MASK(n)))
@@ -79,7 +73,7 @@ GLSL_DEFINE(BFE_SIGN(src, s, n),
                  ^ TO_MASK(n - 1))
                  & TO_MASK(n - 1))
    | ((src >> s) &  (1 << (n - 1)))))
-GLSL_DEFINE(BARRIER, groupMemoryBarrier())
+GLSL_DEFINE(BARRIER, groupMemoryBarrier(); barrier())
 GLSL_DEFINE(LC_IDX, gl_LocalInvocationIndex)
 GLSL_DEFINE(WG_IDX, gl_WorkGroupID.x)
 GLSL_DEFINE(MIX(T, x, y, a), (x) * T(a) + (y) * (1 - T(a)))
@@ -118,7 +112,7 @@ uint prefix_sum(uint data, inout uint total_sum) {
   local_sort[lc_idx] = data;
   BARRIER;
   uint tmp;
-  for (int i = 1; i < WG_SIZE; i *= 2) {
+  for (uint i = 1; i < WG_SIZE; i <<= 1) {
     tmp = local_sort[lc_idx - i];
     BARRIER;
     local_sort[lc_idx] += tmp;
@@ -128,7 +122,8 @@ uint prefix_sum(uint data, inout uint total_sum) {
   return local_sort[lc_idx - 1];
 }
 uint prefix_scan(inout uvec4 v) {
-  uint sum = 0, tmp;
+  uint sum = 0;
+  uint tmp;
   tmp = v.x; v.x = sum; sum += tmp;
   tmp = v.y; v.y = sum; sum += tmp;
   tmp = v.z; v.z = sum; sum += tmp;
@@ -162,6 +157,7 @@ void main() {
     uint sum = 0; EACH(i, WG_SIZE) sum += local_histogram[LC_IDX * WG_SIZE + i];
     histogram[LC_IDX * WG_COUNT + WG_IDX] = sum;
   }
+  BARRIER;
 });
 
 static GLchar const * prefix_scan = GLSL(
@@ -174,7 +170,8 @@ void main() {
     uint val = 0;
     uint idx = d * WG_COUNT + LC_IDX;
     if (LC_IDX < WG_COUNT) val = histogram[idx];
-    uint total, res = prefix_sum(val, total);
+    uint total;
+    uint res = prefix_sum(val, total);
     if (LC_IDX < WG_COUNT) histogram[idx] = res + seed;
     if (LC_IDX == WG_COUNT - 1) seed += res + val;
     BARRIER;
@@ -261,8 +258,8 @@ void main() {
         local_histogram[lc_idx - 1]);
       atomicAdd(local_histogram[lc_idx],
         local_histogram[lc_idx - 12] +
-        local_histogram[lc_idx -  8] +
-        local_histogram[lc_idx -  4]);
+        local_histogram[lc_idx - 8] +
+        local_histogram[lc_idx - 4]);
     }
     BARRIER;
 
@@ -295,15 +292,6 @@ void swap(T& a, T& b) { auto tmp = a; a = b; b = tmp; }
 
 struct { compute_program histogram_count, prefix_scan, permute, flip_float; } static kernels;
 struct { GLuint consts, histogram, output[2]; } static buffers;
-GLSL_DEBUG(
-GLuint temp;
-struct temp_data {
-  GLint a[4];
-  GLint b[4];
-  GLint c[4];
-  GLint d[4];
-};
-)
 
 void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/,
   bool descending /*=  false*/, bool is_signed /*=  false*/, bool is_float /*=  false*/) {
@@ -315,11 +303,6 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
     gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(consts), nullptr, GL_DYNAMIC_DRAW);
     gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.histogram);
     gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLuint) * WG_COUNT * RADICES, nullptr, GL_DYNAMIC_COPY);
-    GLSL_DEBUG(
-    gl.GenBuffers(1, &temp);
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, temp);
-    gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(temp_data) * WG_COUNT * WG_SIZE, nullptr, GL_DYNAMIC_COPY);
-    )
 
     kernels.histogram_count = make_program<GL_COMPUTE_SHADER>(gl, prolog, histogram_count);
     kernels.prefix_scan = make_program<GL_COMPUTE_SHADER>(gl, prolog, prefix_scan);
@@ -337,10 +320,7 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
 
   GLuint data[] = { key, buffers.output[0], index, index != 0 ? buffers.output[1] : 0 };
   gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, HISTOGRAM, buffers.histogram);
-  GLSL_DEBUG(
-  gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, TEMP, temp);
-  )
-  for (int ib = 0; ib < 32; ib+=4) {
+  for (GLuint ib = 0; ib < 32; ib+=4) {
     consts.shift = ib;
     consts.is_signed = is_signed && !is_float && ib == 28;
     gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.consts);
@@ -355,9 +335,13 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
     if (is_float && ib == 0)
       kernels.flip_float.dispatch(gl, WG_COUNT);
 
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.histogram_count.dispatch(gl, WG_COUNT);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.prefix_scan.dispatch(gl);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.permute.dispatch(gl, WG_COUNT);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     swap(data[KEY_IN], data[KEY_OUT]);
     swap(data[VALUE_IN], data[VALUE_OUT]);

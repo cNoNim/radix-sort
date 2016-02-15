@@ -19,8 +19,7 @@ void APIENTRY debug_message(
   }
 }
 
-GLuint64 ticks(void)
-{
+GLuint64 ticks(void) {
   const GLuint64 ticks_per_second = 10000000;
   static LARGE_INTEGER freq;
   static GLuint64 start_time;
@@ -77,7 +76,7 @@ int main(int argc, char const * argv[]) {
   gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[1]);
   gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
 #ifdef NDEBUG
-  radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
+  //radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
 #endif
   for (GLsizeiptr count = max_count; count >= min_count; count >>= 1) {
     gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
@@ -104,7 +103,7 @@ int main(int argc, char const * argv[]) {
         passed &= ptr[i] == count - i - 1;
       gl.UnmapBuffer(GL_COPY_READ_BUFFER);
     }
-    printf("count %10" PRIdPTR " elapsed %10llu ticks %10.8f sec speed %10ll" PRIdPTR " per sec\t - ",
+    printf("count %10" PRIdPTR " elapsed %10" PRId64 " ticks %10.8f sec speed %10" PRId64 " per sec\t - ",
       count, elapsed, elapsed / 10000000., (count * 10000000ll) / elapsed);
     if (passed) printf("PASSED\n");
     else printf("FAILED\n");
