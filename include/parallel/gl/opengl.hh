@@ -4,8 +4,7 @@
 #define WIN32_EXTRA_LEAN
 #include <windows.h>
 #include <GL/gl.h>
-#include "GL/glext.h"
-#include "GL/wglext.h"
+#include <GL/glext.h>
 
 #pragma comment(lib, "opengl32.lib")
 
@@ -16,13 +15,6 @@
 
 #define GLSL(...) STR(__VA_ARGS__) "\n"
 #define GLSL_DEFINE(name, ...) "#define " STR(name) " " GLSL(__VA_ARGS__)
-
-#ifndef NDEBUG
-#define GLSL_DEBUG(...) __VA_ARGS__
-#else
-#define GLSL_DEBUG(...)
-#endif
-
 
 #define GL_FUNCTIONS(FUNCTION)                         \
   FUNCTION(BindBuffer,           BINDBUFFER)           \
@@ -45,31 +37,16 @@
   FUNCTION(UseProgram,           USEPROGRAM)           \
   FUNCTION(UseProgramStages,     USEPROGRAMSTAGES)
 
-#define WGL_FUNCTIONS(FUNCTION)                              \
-  FUNCTION(CreateContextAttribsARB, CREATECONTEXTATTRIBSARB)
-
-
-#define GL_DEBUG_FUNCTIONS(FUNCTION)
-
-#define WGL_DEBUG_FUNCTIONS(FUNCTION)
+namespace parallel {
+namespace gl {
 
 struct GL {
 #define FUNCTION(name, NAME) \
 PFNGL ## NAME ## PROC name;
   GL_FUNCTIONS(FUNCTION)
-#ifndef NDEBUG
-  GL_DEBUG_FUNCTIONS(FUNCTION)
-#endif
-#undef FUNCTION
-#define FUNCTION(name, NAME) \
-PFNWGL ## NAME ## PROC name;
-  WGL_FUNCTIONS(FUNCTION)
-#ifndef NDEBUG
-  WGL_DEBUG_FUNCTIONS(FUNCTION)
-#endif
 #undef FUNCTION
   static GL const & instance();
-  static GL const & initialize(GLDEBUGPROC debug_message_callback);
+  static GL const & initialize(HDC device, GLDEBUGPROC debug_message_callback, bool debug = false);
 };
 
 template<GLuint TYPE>
@@ -132,3 +109,6 @@ private:
     return id;
   }
 };
+
+}
+}

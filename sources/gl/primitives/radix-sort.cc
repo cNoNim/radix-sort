@@ -31,9 +31,9 @@ and changes in AMD Bolt C++ Template Library
 https://github.com/HSA-Libraries/Bolt
 */
 
-#include "primitives/radix-sort.hh"
+#include "parallel/gl/primitives/radix-sort.hh"
 
-#include "opengl.hh"
+#include "parallel/gl/opengl.hh"
 
 #undef min
 #undef max
@@ -290,6 +290,9 @@ void main() {
 template<typename T>
 void swap(T& a, T& b) { auto tmp = a; a = b; b = tmp; }
 
+namespace parallel {
+namespace gl {
+
 struct { compute_program histogram_count, prefix_scan, permute, flip_float; } static kernels;
 struct { GLuint consts, histogram, output[2]; } static buffers;
 
@@ -362,4 +365,7 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
     gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.output[1]);
     gl.BufferData(GL_COPY_WRITE_BUFFER, 0, nullptr, GL_DYNAMIC_COPY);
   }
+}
+
+}
 }

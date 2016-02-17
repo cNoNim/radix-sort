@@ -1,4 +1,4 @@
-workspace "radix-sort"
+workspace "parallel"
   configurations { "debug", "release" }
   platforms { "x86", "x64" }
   location "build"
@@ -21,19 +21,27 @@ workspace "radix-sort"
     architecture "x64"
     targetsuffix "-x64"
 
-project "radix-sort"
+project "parallel-gl"
   kind "staticlib"
   language "c++"
 
-  files { "sources/**.cc"
-        , "include/**.hh"
-        , "include/**.h"
+  files { "sources/gl/**.cc"
+        , "include/parallel/gl/**.hh"
+        , "include/GL/**.h"
         }
 
-project "radix-sort.tests"
+project "parallel-amp"
+  kind "staticlib"
+  language "c++"
+
+  files { "sources/amp/**.cc"
+        , "include/parallel/amp/**.hh"
+        }
+
+project "parallel-tests"
   kind "consoleapp"
   language "c++"
-  links { "radix-sort" }
+  links { "parallel-gl" }
 
   files { "tests/**.cc"
         , "tests/**.hh"
