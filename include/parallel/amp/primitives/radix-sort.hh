@@ -183,12 +183,13 @@ namespace amp {
             const auto local_key = key * WG_SIZE + LC_IDX;
             details::inc_by(local_histogram, local_key, less_than);
             addr += BLOCK_SIZE;
-            if (LC_IDX < RADICES) {
-              uint sum = 0; EACH(i, WG_SIZE) sum += local_histogram[LC_IDX * WG_SIZE + i];
-              histogram[LC_IDX * WG_COUNT + WG_IDX] = sum;
-            }
           }
-        });
+          t_idx.barrier.wait();
+          if (LC_IDX < RADICES) {
+            uint sum = 0; EACH(i, WG_SIZE) sum += local_histogram[LC_IDX * WG_SIZE + i];
+            histogram[LC_IDX * WG_COUNT + WG_IDX] = sum;
+          }
+      });
       concurrency::parallel_for_each(av, prefix_tile,
         [=, &histogram](tiled_index<WG_SIZE> t_idx) restrict(amp) {
           tile_static uint seed;
@@ -284,3 +285,5 @@ namespace amp {
 
 }
 }
+
+#undef EACH
