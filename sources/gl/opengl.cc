@@ -50,5 +50,13 @@ GL const & GL::initialize(HDC device, GLDEBUGPROC debug_message_callback, bool d
   return gl;
 }
 
+void GL::deinitialize() {
+  auto context = wglGetCurrentContext();
+  auto device = wglGetCurrentDC();
+  wglMakeCurrent(nullptr, nullptr);
+  wglDeleteContext(context);
+  DeleteDC(device);
+}
+
 }
 }

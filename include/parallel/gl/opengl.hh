@@ -47,6 +47,7 @@ PFNGL ## NAME ## PROC name;
 #undef FUNCTION
   static GL const & instance();
   static GL const & initialize(HDC device, GLDEBUGPROC debug_message_callback, bool debug = false);
+  static void deinitialize();
 };
 
 template<GLuint TYPE>

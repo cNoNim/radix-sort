@@ -250,17 +250,20 @@ void main() {
     }
     BARRIER;
 
-    if (LC_IDX < RADICES) {
+    if (LC_IDX < RADICES)
       local_histogram[lc_idx] = local_histogram[lc_idx - 1];
-      atomicAdd(local_histogram[lc_idx],
+    BARRIER;
+    if (LC_IDX < RADICES)
+      local_histogram[lc_idx] +=
         local_histogram[lc_idx - 3] +
         local_histogram[lc_idx - 2] +
-        local_histogram[lc_idx - 1]);
-      atomicAdd(local_histogram[lc_idx],
+        local_histogram[lc_idx - 1];
+    BARRIER;
+    if (LC_IDX < RADICES)
+      local_histogram[lc_idx] +=
         local_histogram[lc_idx - 12] +
         local_histogram[lc_idx - 8] +
-        local_histogram[lc_idx - 4]);
-    }
+        local_histogram[lc_idx - 4];
     BARRIER;
 
     const uvec4 out_key = offset - GET_BY4(uvec4, local_histogram, hist_key);
@@ -338,13 +341,9 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
     if (is_float && ib == 0)
       kernels.flip_float.dispatch(gl, WG_COUNT);
 
-    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.histogram_count.dispatch(gl, WG_COUNT);
-    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.prefix_scan.dispatch(gl);
-    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.permute.dispatch(gl, WG_COUNT);
-    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     swap(data[KEY_IN], data[KEY_OUT]);
     swap(data[VALUE_IN], data[VALUE_OUT]);
