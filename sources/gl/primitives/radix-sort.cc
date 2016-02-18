@@ -293,6 +293,8 @@ void main() {
 template<typename T>
 void swap(T& a, T& b) { auto tmp = a; a = b; b = tmp; }
 
+#define EACH(i, size) for (size_t i = 0; i < size; i++)
+
 namespace parallel {
 namespace gl {
 
@@ -301,12 +303,9 @@ struct { GLuint consts, histogram, output[2]; } static buffers;
 
 void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/,
   bool descending /*=  false*/, bool is_signed /*=  false*/, bool is_float /*=  false*/) {
-  struct Consts { GLuint shift, descending, is_signed, key_index; } consts = { 0, descending, 0, index != 0 };
   static bool initialized = false;
   if (!initialized) {
     gl.GenBuffers(sizeof(buffers) / sizeof(GLuint), reinterpret_cast<GLuint *>(&buffers));
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.consts);
-    gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(consts), nullptr, GL_DYNAMIC_DRAW);
     gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.histogram);
     gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLuint) * WG_COUNT * RADICES, nullptr, GL_DYNAMIC_COPY);
 
@@ -317,6 +316,19 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
     initialized = true;
   }
 
+  struct Consts { GLuint shift, descending, is_signed, key_index; } consts[] = {
+    0, descending, 0, index != 0,
+    4, descending, 0, index != 0,
+    8, descending, 0, index != 0,
+    12, descending, 0, index != 0,
+    16, descending, 0, index != 0,
+    20, descending, 0, index != 0,
+    24, descending, 0, index != 0,
+    28, descending, is_signed && !is_float, index != 0,
+    28, descending, 1, index != 0 // inverse flip float
+  };
+  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.consts);
+  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(consts), consts, GL_DYNAMIC_DRAW);
   gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.output[0]);
   gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLuint) * size, nullptr, GL_DYNAMIC_COPY);
   if (index != 0) {
@@ -326,19 +338,14 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
 
   GLuint data[] = { key, buffers.output[0], index, index != 0 ? buffers.output[1] : 0 };
   gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, HISTOGRAM, buffers.histogram);
-  for (GLuint ib = 0; ib < 32; ib+=4) {
-    consts.shift = ib;
-    consts.is_signed = is_signed && !is_float && ib == 28;
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.consts);
-    *static_cast<Consts *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY)) = consts;
-    gl.UnmapBuffer(GL_COPY_WRITE_BUFFER);
-    gl.BindBufferBase(GL_UNIFORM_BUFFER, CONSTS, buffers.consts);
+  EACH (i, 8) {
+    gl.BindBufferRange(GL_UNIFORM_BUFFER, CONSTS, buffers.consts, i * sizeof(Consts), sizeof(Consts));
     gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + KEY_IN, data[KEY_IN], 0, sizeof(GLuint) * size);
     gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + KEY_OUT, data[KEY_OUT], 0, sizeof(GLuint) * size);
     gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_IN, data[VALUE_IN], 0, sizeof(GLuint) * size);
     gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_OUT, data[VALUE_OUT], 0, sizeof(GLuint) * size);
 
-    if (is_float && ib == 0)
+    if (is_float && i == 0)
       kernels.flip_float.dispatch(gl, WG_COUNT);
 
     kernels.histogram_count.dispatch(gl, WG_COUNT);
@@ -350,10 +357,7 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
   }
 
   if (is_float) {
-    consts.is_signed = true;
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.consts);
-    *static_cast<Consts *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY)) = consts;
-    gl.UnmapBuffer(GL_COPY_WRITE_BUFFER);
+    gl.BindBufferRange(GL_UNIFORM_BUFFER, CONSTS, buffers.consts, 8 * sizeof(Consts), sizeof(Consts));
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, DATA + KEY_IN, data[KEY_IN]);
     kernels.flip_float.dispatch(gl, WG_COUNT);
   }

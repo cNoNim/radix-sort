@@ -10,6 +10,8 @@
 #include <parallel/gl/opengl.hh>
 #include <parallel/gl/primitives/radix-sort.hh>
 
+#define EACH(i, size) for (size_t i = 0; i < size; i++)
+
 uint64_t ticks(void) {
   const uint64_t ticks_per_second = UINT64_C(10000000);
   static LARGE_INTEGER freq;
@@ -138,7 +140,6 @@ void test_amp(size_t min_count, size_t max_count, bool debug) {
 }
 
 int main(int argc, char const * argv[]) {
-
 #ifndef NDEBUG
   bool debug = true;
 #else
@@ -146,7 +147,7 @@ int main(int argc, char const * argv[]) {
 #endif
 
   size_t min_count = 1024;
-  size_t max_count = 67108864 / 64;
+  size_t max_count = 64*1024*1024;
   if (argc > 1) {
     uint64_t count;
     std::istringstream(argv[1]) >> count;
