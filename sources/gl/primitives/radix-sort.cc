@@ -65,7 +65,7 @@ layout(binding = CONSTS) uniform Consts {
 layout(binding = HISTOGRAM) buffer Histogram { uint histogram[]; };
 layout(binding = DATA) buffer Data { uint buf[]; } data[4];
 )
-GLSL_DEFINE(EACH(i, size), for (int i = 0; i < size; i++))
+GLSL_DEFINE(EACH(i, count), for (int i = 0; i < count; i++))
 GLSL_DEFINE(TO_MASK(n), ((1 << (n)) - 1))
 GLSL_DEFINE(BFE(src, s, n), ((src >> s) & TO_MASK(n)))
 GLSL_DEFINE(BFE_SIGN(src, s, n),
@@ -111,9 +111,8 @@ uint prefix_sum(uint data, inout uint total_sum) {
   local_sort[LC_IDX] = 0;
   local_sort[lc_idx] = data;
   BARRIER;
-  uint tmp;
   for (uint i = 1; i < WG_SIZE; i <<= 1) {
-    tmp = local_sort[lc_idx - i];
+    uint tmp = local_sort[lc_idx - i];
     BARRIER;
     local_sort[lc_idx] += tmp;
     BARRIER;
@@ -250,20 +249,20 @@ void main() {
     }
     BARRIER;
 
-    if (LC_IDX < RADICES)
-      local_histogram[lc_idx] = local_histogram[lc_idx - 1];
+    uint tmp = 0;
+    if (LC_IDX < RADICES) local_histogram[lc_idx] = local_histogram[lc_idx - 1];
     BARRIER;
-    if (LC_IDX < RADICES)
-      local_histogram[lc_idx] +=
-        local_histogram[lc_idx - 3] +
-        local_histogram[lc_idx - 2] +
-        local_histogram[lc_idx - 1];
+    if (LC_IDX < RADICES) tmp = local_histogram[lc_idx - 3]
+                              + local_histogram[lc_idx - 2]
+                              + local_histogram[lc_idx - 1];
     BARRIER;
-    if (LC_IDX < RADICES)
-      local_histogram[lc_idx] +=
-        local_histogram[lc_idx - 12] +
-        local_histogram[lc_idx - 8] +
-        local_histogram[lc_idx - 4];
+    if (LC_IDX < RADICES) local_histogram[lc_idx] += tmp;
+    BARRIER;
+    if (LC_IDX < RADICES) tmp = local_histogram[lc_idx - 12]
+                              + local_histogram[lc_idx - 8]
+                              + local_histogram[lc_idx - 4];
+    BARRIER;
+    if (LC_IDX < RADICES) local_histogram[lc_idx] += tmp;
     BARRIER;
 
     const uvec4 out_key = offset - GET_BY4(uvec4, local_histogram, hist_key);
@@ -293,7 +292,7 @@ void main() {
 template<typename T>
 void swap(T& a, T& b) { auto tmp = a; a = b; b = tmp; }
 
-#define EACH(i, size) for (size_t i = 0; i < size; i++)
+#define EACH(i, count) for (auto i = decltype(count)(0); i < count; i++)
 
 namespace parallel {
 namespace gl {

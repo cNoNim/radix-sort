@@ -37,6 +37,7 @@
   FUNCTION(GetProgramInfoLog,    GETPROGRAMINFOLOG)    \
   FUNCTION(GetProgramiv,         GETPROGRAMIV)         \
   FUNCTION(MapBuffer,            MAPBUFFER)            \
+  FUNCTION(MapBufferRange,       MAPBUFFERRANGE)       \
   FUNCTION(MemoryBarrier,        MEMORYBARRIER)        \
   FUNCTION(UnmapBuffer,          UNMAPBUFFER)          \
   FUNCTION(UseProgram,           USEPROGRAM)           \
@@ -91,12 +92,19 @@ struct buffer
   }
   template<GLenum TARGET, GLenum ACCESS, typename T, typename F>
   void map(GL const & gl, F && f) {
+    auto buffer_size = size(gl);
     gl.BindBuffer(TARGET, id);
     auto ptr = reinterpret_cast<T *>(gl.MapBuffer(TARGET, ACCESS));
-    f(gl, ptr);
+    f(gl, ptr, buffer_size / sizeof(T));
     gl.UnmapBuffer(TARGET);
   }
-
+  template<GLenum TARGET, GLenum ACCESS, typename T, typename F>
+  void map(GL const & gl, GLsizeiptr offset, GLsizeiptr count, F && f) {
+    gl.BindBuffer(TARGET, id);
+    auto ptr = reinterpret_cast<T *>(gl.MapBufferRange(TARGET, offset * sizeof(T), count * sizeof(T), ACCESS));
+    f(gl, ptr, count);
+    gl.UnmapBuffer(TARGET);
+  }
   template<GLenum TARGET>
   void bind(GL const & gl, GLuint index) { gl.BindBufferBase(TARGET, index, id); }
   template<GLenum TARGET>

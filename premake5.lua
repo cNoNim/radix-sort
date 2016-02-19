@@ -38,11 +38,15 @@ project "parallel-amp"
         , "include/parallel/amp/**.hh"
         }
 
-project "parallel-tests"
+project "parallel-tests-gl"
   kind "consoleapp"
   language "c++"
   links { "parallel-gl" }
 
-  files { "tests/**.cc"
-        , "tests/**.hh"
-        }
+  files { "tests/test-gl.cc" }
+
+project "parallel-tests-amp"
+  kind "consoleapp"
+  language "c++"
+
+  files { "tests/test-amp.cc" }
