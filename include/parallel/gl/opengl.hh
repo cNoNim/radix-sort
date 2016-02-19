@@ -8,6 +8,8 @@
 
 #pragma comment(lib, "opengl32.lib")
 
+#define EACH(i, size) for (GLsizeiptr i = 0; i < size; i++)
+
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
 
 #define _STR(x) #x
@@ -21,7 +23,10 @@
   FUNCTION(BindBufferBase,       BINDBUFFERBASE)       \
   FUNCTION(BindBufferRange,      BINDBUFFERRANGE)      \
   FUNCTION(BindProgramPipeline,  BINDPROGRAMPIPELINE)  \
+  FUNCTION(GetBufferParameteriv, GETBUFFERPARAMETERIV) \
+  FUNCTION(GetBufferParameteri64v, GETBUFFERPARAMETERI64V) \
   FUNCTION(BufferData,           BUFFERDATA)           \
+  FUNCTION(BufferSubData,        BUFFERSUBDATA)        \
   FUNCTION(CopyBufferSubData,    COPYBUFFERSUBDATA)    \
   FUNCTION(CreateShaderProgramv, CREATESHADERPROGRAMV) \
   FUNCTION(DebugMessageCallback, DEBUGMESSAGECALLBACK) \
@@ -45,9 +50,79 @@ struct GL {
 PFNGL ## NAME ## PROC name;
   GL_FUNCTIONS(FUNCTION)
 #undef FUNCTION
-  static GL const & instance();
-  static GL const & initialize(HDC device, GLDEBUGPROC debug_message_callback, bool debug = false);
-  static void deinitialize();
+  GLint alignment;
+  GL & initialize(HDC device, GLDEBUGPROC debug_message_callback, bool debug = false);
+  void deinitialize();
+
+  static GL & instance();
+};
+
+struct buffer
+{
+  GLuint id;
+  template<GLenum USAGE>
+  void allocate(GL const & gl, GLsizeiptr size) {
+    gl.BindBuffer(GL_COPY_WRITE_BUFFER, id);
+    gl.BufferData(GL_COPY_WRITE_BUFFER, size, nullptr, USAGE);
+  }
+  template<GLenum USAGE>
+  GLsizeiptr allocate(GL const & gl, GLsizeiptr size, GLsizei count, bool aligned = false) {
+    auto aligned_size = aligned
+      ? ((size + gl.alignment - 1) / gl.alignment) * gl.alignment
+      : size * count;
+    gl.BindBuffer(GL_COPY_WRITE_BUFFER, id);
+    gl.BufferData(GL_COPY_WRITE_BUFFER, aligned_size * count, nullptr, USAGE);
+    return aligned_size;
+  }
+  void free(GL const & gl) {
+    gl.BindBuffer(GL_COPY_WRITE_BUFFER, id);
+    gl.BufferData(GL_COPY_WRITE_BUFFER, 0, nullptr, GL_DYNAMIC_COPY);
+  }
+  template<typename T>
+  void sub_data(GL const & gl, T && data, GLsizeiptr offset) {
+    gl.BindBuffer(GL_COPY_WRITE_BUFFER, id);
+    gl.BufferSubData(GL_COPY_WRITE_BUFFER, offset, sizeof(T), &data);
+  }
+  template<typename T, size_t N>
+  void sub_data(GL const & gl, T (&array)[N], GLsizeiptr alignment) {
+    gl.BindBuffer(GL_COPY_WRITE_BUFFER, id);
+    EACH (i, N)
+      gl.BufferSubData(GL_COPY_WRITE_BUFFER, i * alignment, sizeof(T), &array[i]);
+  }
+  template<GLenum TARGET, GLenum ACCESS, typename T, typename F>
+  void map(GL const & gl, F && f) {
+    gl.BindBuffer(TARGET, id);
+    auto ptr = reinterpret_cast<T *>(gl.MapBuffer(TARGET, ACCESS));
+    f(gl, ptr);
+    gl.UnmapBuffer(TARGET);
+  }
+
+  template<GLenum TARGET>
+  void bind(GL const & gl, GLuint index) { gl.BindBufferBase(TARGET, index, id); }
+  template<GLenum TARGET>
+  void bind(GL const & gl, GLuint index, GLsizeiptr offset, GLsizeiptr size) {
+    gl.BindBufferRange(TARGET, index, id, offset, size);
+  }
+  GLsizeiptr size(GL const & gl) {
+    if (sizeof(GLsizeiptr) == sizeof(GLint)) {
+      GLint size = 0;
+      gl.BindBuffer(GL_COPY_READ_BUFFER, id);
+      gl.GetBufferParameteriv(GL_COPY_READ_BUFFER, GL_BUFFER_SIZE, &size);
+      return (GLsizeiptr)size;
+    } else {
+      GLint64 size = 0;
+      gl.BindBuffer(GL_COPY_READ_BUFFER, id);
+      gl.GetBufferParameteri64v(GL_COPY_READ_BUFFER, GL_BUFFER_SIZE, &size);
+      return (GLsizeiptr)size;
+    }
+  }
+  bool is_empty() { return id == 0; }
+  static buffer empty() {
+    return buffer{ 0 };
+  }
+  static void factory(GL const & gl, GLsizei count, buffer * buffers) {
+    gl.GenBuffers(count, reinterpret_cast<GLuint *>(buffers));
+  }
 };
 
 template<GLuint TYPE>
@@ -113,3 +188,5 @@ private:
 
 }
 }
+
+#undef EACH

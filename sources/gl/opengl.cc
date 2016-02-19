@@ -6,14 +6,11 @@ namespace parallel {
 namespace gl {
 
 static GL gl;
-static bool initialized = false;
 
-GL const & GL::instance() {
-  return gl;
-}
+GL & GL::instance() { return gl; }
 
 static PIXELFORMATDESCRIPTOR pfd = { 0 };
-GL const & GL::initialize(HDC device, GLDEBUGPROC debug_message_callback, bool debug /*= false*/) {
+GL & GL::initialize(HDC device, GLDEBUGPROC debug_message_callback, bool debug /*= false*/) {
   static char const * names[] = {
 #define FUNCTION(name, NAME) "gl" # name,
     GL_FUNCTIONS(FUNCTION)
@@ -36,18 +33,22 @@ GL const & GL::initialize(HDC device, GLDEBUGPROC debug_message_callback, bool d
     auto wglCreateContextAttribsARB
       = reinterpret_cast<PFNWGLCREATECONTEXTATTRIBSARBPROC>(wglGetProcAddress("wglCreateContextAttribsARB"));
     GLint attribs[] = { WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB, 0 };
+    auto context = wglGetCurrentContext();
     wglMakeCurrent(device, wglCreateContextAttribsARB(device, nullptr, attribs));
+    wglDeleteContext(context);
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   }
 
   auto gl_name = names;
-  auto gl_function = reinterpret_cast<PROC *>(&gl);
+  auto gl_function = reinterpret_cast<PROC *>(this);
   while (*gl_name) *gl_function++ = wglGetProcAddress(*gl_name++);
 
   if(debug_message_callback != nullptr)
-    gl.DebugMessageCallback(debug_message_callback, nullptr);
+    this->DebugMessageCallback(debug_message_callback, nullptr);
 
-  return gl;
+  glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &this->alignment);
+
+  return *this;
 }
 
 void GL::deinitialize() {

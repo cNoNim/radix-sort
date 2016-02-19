@@ -35,11 +35,11 @@ uint64_t timed(F && f) {
 void APIENTRY debug_message(
   GLenum source, GLenum type, GLuint id, GLenum severity,
   GLsizei, GLchar const * message, void const *) {
-  std::cout << std::resetiosflags << std::hex << std::setfill('0')
-    << "0x" << std::setw(8) << source << ":"
-    << "0x" << std::setw(8) << type << ":"
-    << "0x" << std::setw(8) << id << ":"
-    << "0x" << std::setw(8) << severity << std::endl
+  std::cout    << std::resetiosflags << std::hex << std::setfill('0')
+    << "0x"    << std::setw(8)       << source   << ":"
+    << "0x"    << std::setw(8)       << type     << ":"
+    << "0x"    << std::setw(8)       << id       << ":"
+    << "0x"    << std::setw(8)       << severity << std::endl
     << message << std::endl;
   if (type == GL_DEBUG_TYPE_ERROR) {
     std::cout << "Press [ENTER] to exit...";
@@ -52,66 +52,64 @@ void test_gl(size_t min_count, size_t max_count, bool debug) {
   using namespace parallel::gl;
   auto window = CreateWindowExA(WS_EX_APPWINDOW, "static", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   auto device = GetDC(window);
-  auto const & gl = GL::initialize(device, &debug_message, debug);
+  auto & gl = GL::instance().initialize(device, &debug_message, debug);
 
-  std::cout << "OpenGL "
-    << glGetString(GL_VERSION) << std::endl
-    << "\t" << glGetString(GL_VENDOR) << std::endl
-    << "\t" << glGetString(GL_RENDERER) << std::endl;
+  std::cout
+    << "OpenGL " << glGetString(GL_VERSION)  << std::endl
+    << "\t"      << glGetString(GL_VENDOR)   << std::endl
+    << "\t"      << glGetString(GL_RENDERER) << std::endl;
 
-  struct { GLuint objects[2]; } buffers = { 0 };
-  gl.GenBuffers(sizeof(buffers) / sizeof(GLuint), reinterpret_cast<GLuint *>(&buffers));
-  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
-  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[1]);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLint) * max_count, nullptr, GL_DYNAMIC_COPY);
-  if (!debug) radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
-  for (size_t count = max_count; count >= min_count; count >>= 1) {
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.objects[0]);
-    auto keys = static_cast<GLint *>(gl.MapBuffer(GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY));
-    gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
-    auto indexes = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
-    EACH(i, count) {
-      size_t j = i == 0 ? 0 : rand() % i;
-      keys[i] = keys[j];
-      keys[j] = GLint(i - count / 2);
-      indexes[i] = indexes[j];
-      indexes[j] = GLuint(i);
-    }
-    gl.UnmapBuffer(GL_COPY_READ_BUFFER);
-    gl.UnmapBuffer(GL_COPY_WRITE_BUFFER);
+  struct { buffer objects[2]; } buffers = { 0 };
+  buffer::factory(gl, sizeof(buffers) / sizeof(GLuint), buffers.objects);
+  buffers.objects[0].allocate<GL_DYNAMIC_COPY>(gl, sizeof(GLint) * max_count);
+  buffers.objects[1].allocate<GL_DYNAMIC_COPY>(gl, sizeof(GLuint) * max_count);
+  if (!debug) {
+    radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
+    glFinish();
+  }
+  for (size_t count = min_count; count <= max_count; count <<= 1) {
+    buffers.objects[0].map<GL_COPY_WRITE_BUFFER, GL_WRITE_ONLY, GLint>(gl,
+    [&buffers, &count](GL const & gl, GLint * keys) {
+      buffers.objects[1].map<GL_COPY_READ_BUFFER, GL_WRITE_ONLY, GLuint>(gl,
+      [&keys, &count](GL const &, GLuint * indexes) {
+        EACH(i, count) {
+          size_t j = i == 0 ? 0 : rand() % i;
+          keys[i] = keys[j];
+          keys[j] = GLint(i - count / 2);
+          indexes[i] = indexes[j];
+          indexes[j] = GLuint(i);
+        }
+      });
+    });
     auto elapsed = timed([&gl, &buffers, &count] {
       radix_sort(gl, buffers.objects[0], count, buffers.objects[1], true, true);
+      glFinish();
     });
     auto passed = true;
-    {
-      gl.BindBuffer(GL_COPY_READ_BUFFER, buffers.objects[1]);
-      auto ptr = static_cast<GLuint *>(gl.MapBuffer(GL_COPY_READ_BUFFER, GL_WRITE_ONLY));
-      for (size_t i = 0; i < count && passed; i++)
-        passed &= ptr[i] == count - i - 1;
-      gl.UnmapBuffer(GL_COPY_READ_BUFFER);
-    }
-    std::cout << std::setprecision(8) << std::setfill(' ')
-      << "count " << std::setw(10) << count << " "
-      << "elapsed " << std::setw(10) << elapsed << " ticks " << std::setw(10) << elapsed / 10000000. << " sec "
-      << "speed " << std::setw(10) << (count * 10000000ll) / elapsed << " per sec "
-      << "- " << (passed ? "PASSED" : "FAILED") << std::endl;
+    buffers.objects[1].map<GL_COPY_READ_BUFFER, GL_WRITE_ONLY, GLuint>(gl,
+    [&count, &passed](GL const &, GLuint * ptr) {
+      for (size_t i = 0; i < count && passed; i++) passed &= ptr[i] == count - i - 1;
+    });
+    std::cout       << std::setprecision(8) << std::setfill(' ')
+      << "count "   << std::setw(10)        << count   << " "
+      << "elapsed " << std::setw(10)        << elapsed << " ticks " << std::setw(10) << elapsed / 10000000. << " sec "
+      << "speed "   << std::setw(12)        << (count * 10000000ll) / elapsed                               << " per sec "
+      << "- "       << (passed ? "PASSED" : "FAILED")                                                       << std::endl;
   }
   std::cout << "COMPLETE OpenGL" << std::endl;
-  GL::deinitialize();
+  gl.deinitialize();
 }
 
 void test_amp(size_t min_count, size_t max_count, bool debug) {
   using namespace parallel::amp;
   using namespace concurrency;
-  accelerator acc;
-  std::wcout << L"C++ AMP" << std::endl
+  auto acc = accelerator();
+  auto cpu_acc = accelerator(accelerator::cpu_accelerator);
+  std::wcout << L"C++ AMP"      << std::endl
     << L"\t" << acc.description << std::endl;
-  std::vector<int32_t> keys(max_count);
-  std::vector<uint32_t> indexes(max_count);
-  array<uint32_t> akeys(max_count, acc.default_view);
-  array<uint32_t> aindexes(max_count, acc.default_view);
-  for (size_t count = max_count; count >= min_count; count >>= 1) {
+  array<uint32_t> keys(max_count, cpu_acc.default_view, acc.default_view);
+  array<uint32_t> indexes(max_count, cpu_acc.default_view, acc.default_view);
+  for (size_t count = min_count; count <= max_count; count <<= 1) {
     EACH(i, count) {
       size_t j = i == 0 ? 0 : rand() % i;
       keys[i] = keys[j];
@@ -119,24 +117,20 @@ void test_amp(size_t min_count, size_t max_count, bool debug) {
       indexes[i] = indexes[j];
       indexes[j] = uint32_t(i);
     }
-    copy(keys.begin(), keys.begin() + count, akeys);
-    copy(indexes.begin(), indexes.begin() + count, aindexes);
-    auto elapsed = timed([&acc, &akeys, &aindexes, &count] {
-      radix_sort<int>(acc.default_view, akeys.view_as(extent<1>(count)), aindexes.view_as(extent<1>(count)), true);
+    auto elapsed = timed([&acc, &keys, &indexes, &count] {
+      radix_sort<int>(acc.default_view, keys.view_as(extent<1>(count)), indexes.view_as(extent<1>(count)), true);
+      acc.default_view.wait();
     });
     auto passed = true;
-    {
-      copy(aindexes.view_as(extent<1>(count)), indexes.begin());
-      for (size_t i = 0; i < count && passed; i++)
-        passed &= indexes[i] == count - i - 1;
-    }
+    for (size_t i = 0; i < count && passed; i++)
+      passed &= indexes[i] == count - i - 1;
     std::cout << std::setprecision(8) << std::setfill(' ')
       << "count " << std::setw(10) << count << " "
       << "elapsed " << std::setw(10) << elapsed << " ticks " << std::setw(10) << elapsed / 10000000. << " sec "
       << "speed " << std::setw(10) << (count * 10000000ll) / elapsed << " per sec "
       << "- " << (passed ? "PASSED" : "FAILED") << std::endl;
   }
-  std::wcout << L"COMPLETE C++ AMP" << std::endl;
+  std::cout << "COMPLETE C++ AMP" << std::endl;
 }
 
 int main(int argc, char const * argv[]) {
@@ -145,9 +139,8 @@ int main(int argc, char const * argv[]) {
 #else
   bool debug = argc > 2;
 #endif
-
   size_t min_count = 1024;
-  size_t max_count = 64*1024*1024;
+  size_t max_count = 1024 * 1024;
   if (argc > 1) {
     uint64_t count;
     std::istringstream(argv[1]) >> count;

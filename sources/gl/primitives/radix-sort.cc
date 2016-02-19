@@ -299,15 +299,17 @@ namespace parallel {
 namespace gl {
 
 struct { compute_program histogram_count, prefix_scan, permute, flip_float; } static kernels;
-struct { GLuint consts, histogram, output[2]; } static buffers;
+struct { buffer consts, histogram, output[2]; } static buffers;
+struct Consts { GLuint shift, descending, is_signed, key_index; };
 
-void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/,
+void radix_sort(GL const & gl, buffer key, GLsizeiptr size /*= 0*/, buffer index /*= buffer::empty()*/,
   bool descending /*=  false*/, bool is_signed /*=  false*/, bool is_float /*=  false*/) {
   static bool initialized = false;
+  static GLsizeiptr aligned_const_size = 0;
   if (!initialized) {
-    gl.GenBuffers(sizeof(buffers) / sizeof(GLuint), reinterpret_cast<GLuint *>(&buffers));
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.histogram);
-    gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLuint) * WG_COUNT * RADICES, nullptr, GL_DYNAMIC_COPY);
+    buffer::factory(gl, sizeof(buffers) / sizeof(buffer), &buffers.consts);
+    aligned_const_size = buffers.consts.allocate<GL_DYNAMIC_DRAW>(gl, sizeof(Consts), 9, true);
+    buffers.histogram.allocate<GL_DYNAMIC_COPY>(gl, sizeof(GLuint) * WG_COUNT * RADICES);
 
     kernels.histogram_count = make_program<GL_COMPUTE_SHADER>(gl, prolog, histogram_count);
     kernels.prefix_scan = make_program<GL_COMPUTE_SHADER>(gl, prolog, prefix_scan);
@@ -316,58 +318,57 @@ void radix_sort(GL const & gl, GLuint key, GLsizeiptr size, GLuint index /*= 0*/
     initialized = true;
   }
 
-  struct Consts { GLuint shift, descending, is_signed, key_index; } consts[] = {
-    0, descending, 0, index != 0,
-    4, descending, 0, index != 0,
-    8, descending, 0, index != 0,
-    12, descending, 0, index != 0,
-    16, descending, 0, index != 0,
-    20, descending, 0, index != 0,
-    24, descending, 0, index != 0,
-    28, descending, is_signed && !is_float, index != 0,
-    28, descending, 1, index != 0 // inverse flip float
+  size = size == 0 ? key.size(gl) : size * sizeof(GLuint);
+
+  Consts consts[] = {
+    0, descending, 0, !index.is_empty(),
+    4, descending, 0, !index.is_empty(),
+    8, descending, 0, !index.is_empty(),
+    12, descending, 0, !index.is_empty(),
+    16, descending, 0, !index.is_empty(),
+    20, descending, 0, !index.is_empty(),
+    24, descending, 0, !index.is_empty(),
+    28, descending, is_signed && !is_float, !index.is_empty(),
+    28, descending, 1, !index.is_empty() // inverse flip float
   };
-  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.consts);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(consts), consts, GL_DYNAMIC_DRAW);
-  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.output[0]);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLuint) * size, nullptr, GL_DYNAMIC_COPY);
-  if (index != 0) {
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.output[1]);
-    gl.BufferData(GL_COPY_WRITE_BUFFER, sizeof(GLuint) * size, nullptr, GL_DYNAMIC_COPY);
-  }
+  buffers.consts.sub_data(gl, consts, aligned_const_size);
+  buffers.output[0].allocate<GL_DYNAMIC_COPY>(gl, size);
+  if (!index.is_empty()) { buffers.output[1].allocate<GL_DYNAMIC_COPY>(gl, size); }
 
-  GLuint data[] = { key, buffers.output[0], index, index != 0 ? buffers.output[1] : 0 };
-  gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, HISTOGRAM, buffers.histogram);
-  EACH (i, 8) {
-    gl.BindBufferRange(GL_UNIFORM_BUFFER, CONSTS, buffers.consts, i * sizeof(Consts), sizeof(Consts));
-    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + KEY_IN, data[KEY_IN], 0, sizeof(GLuint) * size);
-    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + KEY_OUT, data[KEY_OUT], 0, sizeof(GLuint) * size);
-    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_IN, data[VALUE_IN], 0, sizeof(GLuint) * size);
-    gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, DATA + VALUE_OUT, data[VALUE_OUT], 0, sizeof(GLuint) * size);
+  buffer data[] = { key, buffers.output[0], index, index.is_empty() ? buffer::empty() : buffers.output[1] };
+  buffers.histogram.bind<GL_SHADER_STORAGE_BUFFER>(gl, HISTOGRAM);
+  EACH(i, 8) {
+    buffers.consts.bind<GL_UNIFORM_BUFFER>(gl, CONSTS, i * aligned_const_size, sizeof(Consts));
+    data[KEY_IN].bind<GL_SHADER_STORAGE_BUFFER>(gl, DATA + KEY_IN, 0, size);
+    data[KEY_OUT].bind<GL_SHADER_STORAGE_BUFFER>(gl, DATA + KEY_OUT, 0, size);
+    data[VALUE_IN].bind<GL_SHADER_STORAGE_BUFFER>(gl, DATA + VALUE_IN, 0, size);
+    data[VALUE_OUT].bind<GL_SHADER_STORAGE_BUFFER>(gl, DATA + VALUE_OUT, 0, size);
 
-    if (is_float && i == 0)
+    if (is_float && i == 0) {
       kernels.flip_float.dispatch(gl, WG_COUNT);
+      gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    }
 
     kernels.histogram_count.dispatch(gl, WG_COUNT);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.prefix_scan.dispatch(gl);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.permute.dispatch(gl, WG_COUNT);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     swap(data[KEY_IN], data[KEY_OUT]);
     swap(data[VALUE_IN], data[VALUE_OUT]);
   }
 
   if (is_float) {
-    gl.BindBufferRange(GL_UNIFORM_BUFFER, CONSTS, buffers.consts, 8 * sizeof(Consts), sizeof(Consts));
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, DATA + KEY_IN, data[KEY_IN]);
+    buffers.consts.bind<GL_UNIFORM_BUFFER>(gl, CONSTS, 8 * aligned_const_size, sizeof(Consts));
+    data[KEY_IN].bind<GL_SHADER_STORAGE_BUFFER>(gl, DATA + KEY_IN);
     kernels.flip_float.dispatch(gl, WG_COUNT);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
   }
 
-  gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.output[0]);
-  gl.BufferData(GL_COPY_WRITE_BUFFER, 0, nullptr, GL_DYNAMIC_COPY);
-  if (index != 0) {
-    gl.BindBuffer(GL_COPY_WRITE_BUFFER, buffers.output[1]);
-    gl.BufferData(GL_COPY_WRITE_BUFFER, 0, nullptr, GL_DYNAMIC_COPY);
-  }
+  buffers.output[0].free(gl);
+  if (!index.is_empty()) { buffers.output[1].free(gl); }
 }
 
 }
