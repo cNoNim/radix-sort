@@ -40,7 +40,7 @@ void test_amp(size_t min_count, size_t max_count, bool debug) {
   array<uint32_t> indexes(max_count, cpu_acc.default_view, acc.default_view);
   if (!debug) {
     std::cout << "Warming...";
-    radix_sort<int>(acc.default_view, keys.view_as(extent<1>(min_count)), indexes.view_as(extent<1>(min_count)), true);
+    radix_sort(acc.default_view, keys.view_as(extent<1>(min_count)), indexes.view_as(extent<1>(min_count)), true);
     acc.default_view.wait();
     std::cout << "done." << std::endl;
   }
@@ -53,7 +53,7 @@ void test_amp(size_t min_count, size_t max_count, bool debug) {
       indexes[j] = uint32_t(i);
     }
     auto elapsed = timed([&acc, &keys, &indexes, &count] {
-      radix_sort<int>(acc.default_view, keys.view_as(extent<1>(count)), indexes.view_as(extent<1>(count)), true);
+      radix_sort(acc.default_view, keys.view_as(extent<1>(count)), indexes.view_as(extent<1>(count)), true, true);
       acc.default_view.wait();
     });
     auto passed = true;

@@ -48,5 +48,6 @@ project "parallel-tests-gl"
 project "parallel-tests-amp"
   kind "consoleapp"
   language "c++"
+  links { "parallel-amp" }
 
   files { "tests/test-amp.cc" }
