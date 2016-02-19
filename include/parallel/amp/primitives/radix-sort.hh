@@ -54,10 +54,10 @@ namespace amp {
     }
     template<typename T>
     void inc_by(T src, uint_4 idx, uint_4 flag) restrict(cpu, amp) {
-      src[idx.x] += flag.x;
-      src[idx.y] += flag.y;
-      src[idx.z] += flag.z;
-      src[idx.w] += flag.w;
+      atomic_fetch_add(&src[idx.x], flag.x);
+      atomic_fetch_add(&src[idx.y], flag.y);
+      atomic_fetch_add(&src[idx.z], flag.z);
+      atomic_fetch_add(&src[idx.w], flag.w);
     }
     template<typename T, typename S>
     void set_by(T dest, uint_4 idx, S val) restrict(cpu, amp) {
@@ -122,30 +122,30 @@ namespace amp {
         auto key = cmp;
         uint total;
         key += prefix_sum(prefix_scan(key), total, t_idx);
-        t_idx.barrier.wait();;
+        t_idx.barrier.wait();
 
         const uint_4 dest_addr = mix(key, addr - key + total, cmp);
         set_by(local_sort, dest_addr, sort);
         set_by(local_sort_val, dest_addr, sort_val);
-        t_idx.barrier.wait();;
+        t_idx.barrier.wait();
 
         sort = get_by(local_sort, addr);
         sort_val = get_by(local_sort_val, addr);
-        t_idx.barrier.wait();;
+        t_idx.barrier.wait();
 
         if (is_signed) {
           set_by(local_sort, dest_addr, signs);
-          t_idx.barrier.wait();;
+          t_idx.barrier.wait();
 
           signs = get_by(local_sort, addr);
-          t_idx.barrier.wait();;
+          t_idx.barrier.wait();
         }
       }
     }
   }
 
   template<typename T>
-  void radix_sort(concurrency::accelerator_view const & av,
+  void radix_sort(concurrency::accelerator_view & av,
     concurrency::array_view<uint32_t> key, concurrency::array_view<uint32_t> index,
     bool descending = false) {
     using namespace concurrency;
@@ -255,20 +255,22 @@ namespace amp {
             }
             t_idx.barrier.wait();
 
-            if (LC_IDX < RADICES)
+            uint a, b, c;
+            if (LC_IDX < RADICES) {
               local_histogram[lc_idx] = local_histogram[lc_idx - 1];
+              a = local_histogram[lc_idx - 3];
+              b = local_histogram[lc_idx - 2];
+              c = local_histogram[lc_idx - 1];
+            }
             t_idx.barrier.wait();
-            if (LC_IDX < RADICES)
-              local_histogram[lc_idx] +=
-                local_histogram[lc_idx - 3] +
-                local_histogram[lc_idx - 2] +
-                local_histogram[lc_idx - 1];
+            if (LC_IDX < RADICES) {
+              local_histogram[lc_idx] += a + b + c;
+              a = local_histogram[lc_idx - 12];
+              b = local_histogram[lc_idx - 8];
+              c = local_histogram[lc_idx - 4];
+            }
             t_idx.barrier.wait();
-            if (LC_IDX < RADICES)
-              local_histogram[lc_idx] +=
-                local_histogram[lc_idx - 12] +
-                local_histogram[lc_idx - 8] +
-                local_histogram[lc_idx - 4];
+            if (LC_IDX < RADICES) local_histogram[lc_idx] += a + b + c;
             t_idx.barrier.wait();
 
             const auto out_key = offset - details::get_by(local_histogram, hist_key);
