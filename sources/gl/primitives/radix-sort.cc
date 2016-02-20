@@ -54,6 +54,48 @@ https://github.com/HSA-Libraries/Bolt
 #define RADICES 16       // (1 << BITS_PER_PASS)
 #define RADICES_MASK 0xf // (RADICES - 1)
 
+#define TEMP 5
+
+#define TEMP_SIZE RADICES * 2
+#define TEMP_COUNT WG_COUNT //* WG_SIZE
+#define TEMP_INDEX WG_IDX //* WG_SIZE + LC_IDX
+#define TEMP_OUT(value) if (LC_IDX == 0) EACH(i, TEMP_SIZE) temp[TEMP_INDEX].v[i] = value[i]
+
+#include <fstream>
+#include <iomanip>
+#include <string>
+#include <sstream>
+
+auto size_length(size_t number) {
+  size_t length = 1;
+  for (size_t i = 9; i < number; i = i * 10 + 9, length++);
+  return length;
+}
+
+#define EACH(i, count) for (auto i = decltype(count)(0); i < count; i++)
+
+template<typename T>
+void dump(T * ptr, size_t count, std::string const & filename) {
+  using namespace std;
+  fstream out;
+  out.open(filename, out.out | out.trunc);
+  auto width = size_length(count);
+  EACH(i, count)
+    out << "[" << setw(width) << i << "]\t" << ptr[i] << endl;
+  out.close();
+}
+
+struct temp_data {
+  GLuint v[TEMP_SIZE];
+  friend std::ostream & operator<< (std::ostream & stream, temp_data const & data) {
+    EACH(i, ARRAYSIZE(data.v))
+      stream << std::setw(11) << data.v[i];
+    return stream;
+  }
+};
+
+#undef EACH
+
 static GLchar const * prolog = GLSL(
 layout(local_size_x = WG_SIZE) in;
 layout(binding = CONSTS) uniform Consts {
@@ -64,8 +106,10 @@ layout(binding = CONSTS) uniform Consts {
 };
 layout(binding = HISTOGRAM) buffer Histogram { uint histogram[]; };
 layout(binding = DATA) buffer Data { uint buf[]; } data[4];
+struct temp_data { uint v[TEMP_SIZE]; };
+layout(binding = TEMP) buffer Temp { temp_data temp[]; };
 )
-GLSL_DEFINE(EACH(i, count), for (int i = 0; i < count; i++))
+GLSL_DEFINE(EACH(i, count), for (int i = 0; i < (count); i++))
 GLSL_DEFINE(TO_MASK(n), ((1 << (n)) - 1))
 GLSL_DEFINE(BFE(src, s, n), ((src >> s) & TO_MASK(n)))
 GLSL_DEFINE(BFE_SIGN(src, s, n),
@@ -248,6 +292,8 @@ void main() {
       local_histogram_to_carry[carry_idx] += local_histogram[lc_idx] = sum;
     }
     BARRIER;
+    TEMP_OUT(local_histogram);
+    //BARRIER;
 
     uint tmp = 0;
     if (LC_IDX < RADICES) local_histogram[lc_idx] = local_histogram[lc_idx - 1];
@@ -298,7 +344,7 @@ namespace parallel {
 namespace gl {
 
 struct { compute_program histogram_count, prefix_scan, permute, flip_float; } static kernels;
-struct { buffer consts, histogram, output[2]; } static buffers;
+struct { buffer consts, histogram, output[2], temp; } static buffers;
 struct Consts { GLuint shift, descending, is_signed, key_index; };
 
 void radix_sort(GL const & gl, buffer key, GLsizeiptr size /*= 0*/, buffer index /*= buffer::empty()*/,
@@ -309,6 +355,8 @@ void radix_sort(GL const & gl, buffer key, GLsizeiptr size /*= 0*/, buffer index
     buffer::factory(gl, sizeof(buffers) / sizeof(buffer), &buffers.consts);
     aligned_const_size = buffers.consts.allocate<GL_DYNAMIC_DRAW>(gl, sizeof(Consts), 9, true);
     buffers.histogram.allocate<GL_DYNAMIC_COPY>(gl, sizeof(GLuint) * WG_COUNT * RADICES);
+
+    buffers.temp.allocate<GL_DYNAMIC_DRAW>(gl, sizeof(temp_data) * TEMP_COUNT);
 
     kernels.histogram_count = make_program<GL_COMPUTE_SHADER>(gl, prolog, histogram_count);
     kernels.prefix_scan = make_program<GL_COMPUTE_SHADER>(gl, prolog, prefix_scan);
@@ -336,7 +384,13 @@ void radix_sort(GL const & gl, buffer key, GLsizeiptr size /*= 0*/, buffer index
 
   buffer data[] = { key, buffers.output[0], index, index.is_empty() ? buffer::empty() : buffers.output[1] };
   buffers.histogram.bind<GL_SHADER_STORAGE_BUFFER>(gl, HISTOGRAM);
+  buffers.temp.bind<GL_SHADER_STORAGE_BUFFER>(gl, TEMP);
   EACH(i, 8) {
+    std::ostringstream filename;
+    filename << "GL\\"
+      << std::setw(8) << std::setfill('0') << size / sizeof(GLuint) << "_"
+      << std::setw(2) << std::setfill('0') << consts[i].shift;
+
     buffers.consts.bind<GL_UNIFORM_BUFFER>(gl, CONSTS, i * aligned_const_size, sizeof(Consts));
     data[KEY_IN].bind<GL_SHADER_STORAGE_BUFFER>(gl, DATA + KEY_IN, 0, size);
     data[KEY_OUT].bind<GL_SHADER_STORAGE_BUFFER>(gl, DATA + KEY_OUT, 0, size);
@@ -354,6 +408,14 @@ void radix_sort(GL const & gl, buffer key, GLsizeiptr size /*= 0*/, buffer index
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     kernels.permute.dispatch(gl, WG_COUNT);
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    buffers.temp.map<GL_COPY_READ_BUFFER, GL_READ_ONLY, temp_data>(gl,
+      [&](auto gl, auto ptr, auto count) {
+      dump(ptr, count, filename.str() + "_temp.dump");
+    });
+    data[KEY_OUT].map<GL_COPY_READ_BUFFER, GL_MAP_READ_BIT, GLint>(gl, 0, size / sizeof(GLuint),
+    [&](auto gl, auto ptr, auto count) {
+      dump(ptr, count, filename.str() + ".dump");
+    });
 
     swap(data[KEY_IN], data[KEY_OUT]);
     swap(data[VALUE_IN], data[VALUE_OUT]);

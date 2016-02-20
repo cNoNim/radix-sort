@@ -61,7 +61,7 @@ void test_gl(size_t min_count, size_t max_count, bool debug) {
   buffer::factory(gl, sizeof(buffers) / sizeof(GLuint), buffers.objects);
   buffers.objects[0].allocate<GL_DYNAMIC_COPY>(gl, sizeof(GLint) * max_count);
   buffers.objects[1].allocate<GL_DYNAMIC_COPY>(gl, sizeof(GLuint) * max_count);
-  if (!debug) {
+  if (false && !debug) {
     std::cout << "Warming...";
     radix_sort(gl, buffers.objects[0], min_count, buffers.objects[1], true, true);
     glFinish();
@@ -107,8 +107,8 @@ int main(int argc, char const * argv[]) {
 #else
   bool debug = argc > 2;
 #endif
-  size_t min_count = 1024;
-  size_t max_count = 64 * 1024 * 1024;
+  size_t min_count = 1024 * 1024;
+  size_t max_count = 1024 * 1024;
   if (argc > 1) {
     uint64_t count;
     std::istringstream(argv[1]) >> count;

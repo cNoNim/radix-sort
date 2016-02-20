@@ -38,7 +38,7 @@ void test_amp(size_t min_count, size_t max_count, bool debug) {
     << L"\t" << acc.description << std::endl;
   array<uint32_t> keys(max_count, cpu_acc.default_view, acc.default_view);
   array<uint32_t> indexes(max_count, cpu_acc.default_view, acc.default_view);
-  if (!debug) {
+  if (false && !debug) {
     std::cout << "Warming...";
     radix_sort(acc.default_view, keys.view_as(extent<1>(min_count)), indexes.view_as(extent<1>(min_count)), true);
     acc.default_view.wait();
@@ -74,8 +74,8 @@ int main(int argc, char const * argv[]) {
 #else
   bool debug = argc > 2;
 #endif
-  size_t min_count = 1024;
-  size_t max_count = 64 * 1024 * 1024;
+  size_t min_count = 1024 * 1024;
+  size_t max_count = 1024 * 1024;
   if (argc > 1) {
     uint64_t count;
     std::istringstream(argv[1]) >> count;

@@ -41,6 +41,42 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define EACH(i, count) for (auto i = decltype(count)(0); i < count; i++)
 
+#define TEMP_SIZE RADICES * 2
+#define TEMP_COUNT WG_COUNT //* WG_SIZE
+#define TEMP_INDEX WG_IDX //* WG_SIZE + LC_IDX
+#define TEMP_OUT(value) if (LC_IDX == 0) EACH(i, TEMP_SIZE) temp[TEMP_INDEX].v[i] = value[i]
+
+#include <fstream>
+#include <iomanip>
+#include <string>
+#include <sstream>
+
+auto size_length(size_t number) {
+  size_t length = 1;
+  for (size_t i = 9; i < number; i = i * 10 + 9, length++);
+  return length;
+}
+
+template<typename T>
+void dump(T * ptr, size_t count, std::string const & filename) {
+  using namespace std;
+  fstream out;
+  out.open(filename, out.out | out.trunc);
+  auto width = size_length(count);
+  EACH(i, count)
+    out << "[" << setw(width) << i << "]\t" << ptr[i] << endl;
+  out.close();
+}
+
+struct temp_data {
+  uint32_t v[TEMP_SIZE];
+  friend std::ostream & operator<< (std::ostream & stream, temp_data const & data) {
+    EACH(i, ARRAYSIZE(data.v))
+      stream << std::setw(11) << data.v[i];
+    return stream;
+  }
+};
+
 using namespace concurrency;
 using namespace concurrency::graphics;
 
@@ -225,6 +261,7 @@ void permute(
   array_view<uint> data_key_out,
   array_view<uint> data_index_out,
   array_view<uint> histogram,
+  array_view<temp_data> temp,
   uint shift,
   bool descending,
   bool is_signed,
@@ -271,6 +308,8 @@ void permute(
       uint sum = 0; EACH(i, WG_SIZE / RADICES) sum += local_sort[i * RADICES + LC_IDX];
       local_histogram_to_carry[carry_idx] += local_histogram[lc_idx] = sum;
     }
+    BARRIER;
+    TEMP_OUT(local_histogram);
     BARRIER;
 
     uint tmp = 0;
@@ -319,7 +358,6 @@ void flip_float(
   }
 }
 
-
 namespace parallel {
 namespace amp {
 
@@ -327,6 +365,7 @@ void radix_sort(concurrency::accelerator_view & av,
   concurrency::array_view<uint32_t> key, concurrency::array_view<uint32_t> index,
   bool descending /*= false*/, bool is_signed /*= false*/, bool is_float /*= false*/) {
   array<uint> histogram(WG_COUNT * RADICES, av);
+  array<temp_data> temp(TEMP_COUNT, av);
   array<uint> key_out(key.extent, av);
   array<uint> index_out(index.extent, av);
   auto tile = extent<1>(WG_COUNT * WG_SIZE).tile<WG_SIZE>();
@@ -337,6 +376,11 @@ void radix_sort(concurrency::accelerator_view & av,
   array_view<uint> data_index_out = index_out;
   auto key_index = index.extent.size() != 0;
   for (uint shift = 0; shift < 32; shift += 4) {
+    std::ostringstream filename;
+    filename << "AMP\\"
+      << std::setw(8) << std::setfill('0') << key.extent.size() << "_"
+      << std::setw(2) << std::setfill('0') << shift;
+
     if (is_float && shift == 0) {
       concurrency::parallel_for_each(av, tile,
       [=](tiled_index<WG_SIZE> t_idx) restrict(amp) {
@@ -354,11 +398,13 @@ void radix_sort(concurrency::accelerator_view & av,
       prefix_sum(t_idx, histogram);
     });
     concurrency::parallel_for_each(av, tile,
-    [=, &histogram](tiled_index<WG_SIZE> t_idx) restrict(amp) {
+    [=, &histogram, &temp](tiled_index<WG_SIZE> t_idx) restrict(amp) {
       permute(t_idx, data_key_in, data_index_in,
-        data_key_out, data_index_out, histogram,
+        data_key_out, data_index_out, histogram, temp,
         shift, descending, is_signed && shift == 28, key_index);
     });
+    dump(array_view<temp_data>(temp).data(), temp.extent.size(), filename.str() + "_temp.dump");
+    dump((int32_t *)data_key_out.data(), data_key_out.extent.size(), filename.str() + ".dump");
     std::swap(data_key_in, data_key_out);
     std::swap(data_index_in, data_index_out);
   }
